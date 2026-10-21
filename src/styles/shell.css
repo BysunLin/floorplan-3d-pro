@@ -1,0 +1,67 @@
+/* 应用外壳：根容器 / 区域层 / 磨砂卡片 / 标题栏与菜单 */
+/* ============================================================================
+ *  界面骨架
+ *    .app        整屏根容器（工作区 + 悬浮区域层）
+ *    .workspace  工作区：绝对定位铺满整屏，最底层
+ *    .ui-layer   区域层：垂直排布 标题菜单栏 / 中部（左右面板 + 辅助浮层） / 状态栏
+ * ========================================================================== */
+.app{position:relative;height:100vh;height:100dvh;overflow:hidden;background:var(--paper);
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input{-webkit-user-select:text;user-select:text}
+.workspace{position:absolute;inset:0;overflow:hidden;background:var(--paper)}
+.ui-layer{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:var(--ui-gap);
+  padding:var(--ui-gap);pointer-events:none}
+/* 磨砂浮动卡片：所有界面区域共用 */
+.glass-card{pointer-events:auto;min-width:0;min-height:0;overflow:hidden;
+  background:var(--glass);border:1px solid var(--glass-line);border-radius:var(--card-radius);box-shadow:var(--card-shadow);
+  -webkit-backdrop-filter:blur(6px) saturate(1.6);backdrop-filter:blur(6px) saturate(1.6)}
+@supports not (backdrop-filter:blur(6px)){
+  .glass-card{background:var(--glass-strong)}
+}
+.ui-top{position:relative;z-index:6;flex:none;overflow:visible}   /* 下拉菜单可以溢出卡片 */
+.ui-bottom{flex:none}
+.ui-middle{flex:1;min-height:0;display:flex;gap:var(--ui-gap)}
+.ui-left,.ui-right{flex:none;display:flex;flex-direction:column}
+.ui-left{width:236px}
+.ui-right{width:300px}
+.ui-center{flex:1;min-width:0;position:relative;pointer-events:none}
+/* 标题菜单栏内容：标题独占一行，菜单栏与常用工具排在第二行 */
+.topbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 12px;min-width:0}
+.brand{display:flex;align-items:baseline;gap:10px;min-width:0;flex:1 0 100%;line-height:1.25}
+.brand b{font-size:15px;letter-spacing:.5px;white-space:nowrap;flex:none}
+.brand span{color:var(--muted);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp{display:flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--glass-line);border-radius:9px;background:rgba(255,255,255,.66)}
+.btn{border:0;background:transparent;padding:5px 9px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#f2ece2}
+.btn.on{background:var(--ink);color:#fff}
+.btn.chip.on{background:var(--accent-soft);color:var(--accent)}
+#langSel .btn{min-width:32px;font-weight:500}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.primary:hover{background:#9f5530}
+.btn.danger{color:#b3372a}
+.spacer{flex:1}
+/* ---------- 菜单栏：与右侧常用按钮组同一套外观 ---------- */
+.grp.menus{gap:2px}
+.menu{position:relative}
+.menu summary{list-style:none;border:0;background:transparent;border-radius:6px;padding:5px 10px;cursor:pointer;
+  transition:background .25s ease,color .25s ease}
+.menu summary:hover{background:#f2ece2}
+.menu[open] summary{background:var(--accent-soft);color:var(--accent)}
+.menu summary::-webkit-details-marker{display:none}
+/* ---------- 子菜单：统一按钮尺寸 / 状态 / 间距 ---------- */
+.menu-pop{position:absolute;left:0;top:calc(100% + 8px);display:flex;flex-direction:column;gap:1px;min-width:180px;max-width:calc(100vw - 24px);
+  background:#fff;border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 10px 30px rgba(40,30,20,.14);z-index:20;animation:fadeIn .2s ease}
+.menu-pop .btn{width:100%;padding:6px 9px;border-radius:6px;text-align:left;transition:background .15s ease,color .15s ease}
+.menu-pop .btn.on{background:var(--accent-soft);color:var(--accent)}
+.menu-pop .btn.danger{color:#b3372a}
+.menu-pop .btn.danger:hover{background:#fbece8}
+.menu-pop .range{padding:2px 9px 6px}
+.menu-sec{padding:8px 9px 3px;font-size:11px;color:var(--muted);letter-spacing:.6px}
+.menu-sep{height:1px;background:var(--line);margin:5px 4px}
+.menu-row{display:flex;flex-wrap:wrap;gap:4px;padding:0 4px 4px}
+.menu-row .btn{width:auto;padding:5px 9px}
+.menu.wide .menu-pop{min-width:320px}
+/* 靠右的菜单（如 3D 视角）：下拉面板右对齐，避免溢出视口 */
+.menu.menu-end .menu-pop{left:auto;right:0}
+/* 窄屏：下拉面板对齐整个标题栏，避免左右溢出 */

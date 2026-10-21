@@ -1,0 +1,46 @@
+/* 响应式：窄屏抽屉 / 宽屏收起 / 触屏加大点击区域 */
+@media (max-width:820px){
+  .topbar{position:relative}
+  .menu{position:static}
+  .menu-pop,.menu.wide .menu-pop{left:8px;right:8px;top:calc(100% + 4px);width:auto;min-width:0;max-height:calc(100vh - 110px);overflow:auto}
+}
+@media (pointer:coarse){
+  body{font-size:14px}
+  .topbar{padding:8px 10px;gap:8px}
+  .grp{padding:3px;border-radius:10px}
+  .btn{padding:8px 12px;min-height:38px;border-radius:8px}
+  .seg .btn{min-width:88px}
+  .menu summary{padding:8px 12px;min-height:38px;border-radius:8px}
+  .menu-pop .btn{padding:11px 14px}
+  .item{padding:10px 4px 8px}
+  .form input,.form select{font-size:16px;padding:8px 9px}
+  .form input[type=color]{height:40px}
+  .actions .btn,#fab .btn{min-height:42px;padding:9px 14px}
+  td{padding:7px 2px}
+  #roomList button{padding:8px 10px}
+  .mat{padding:9px 8px}
+  .range input{width:120px!important}
+}
+/* ---------- 宽屏：左右面板可收起 ---------- */
+@media (min-width:1101px){
+  .ui-left,.ui-right{transition:width .3s cubic-bezier(.3,.7,.3,1),opacity .25s ease,margin .3s}
+  .app.hide-lib .ui-left,.app.hide-panel .ui-right{width:0;opacity:0;border-width:0;box-shadow:none;pointer-events:none}
+  .app.hide-lib .ui-left{margin-right:calc(var(--ui-gap) * -1)}
+  .app.hide-panel .ui-right{margin-left:calc(var(--ui-gap) * -1)}
+  .lib>div,#panel{min-width:220px}
+}
+/* ---------- 竖屏 / 窄屏：左右面板改为抽屉 ---------- */
+.narrow-only{display:none!important}
+@media (max-width:1100px){
+  .grp.narrow-only{display:flex!important}
+  .btn.narrow-only,#fab .btn.narrow-only{display:inline-block!important}
+  .ui-middle{position:relative;display:block}
+  .ui-left,.ui-right{position:absolute;top:0;bottom:0;z-index:7;width:min(320px,86vw);opacity:0;pointer-events:none;
+    transition:transform .3s cubic-bezier(.3,.7,.3,1),opacity .25s ease}
+  .ui-left{left:0;transform:translateX(-106%)}
+  .ui-right{right:0;transform:translateX(106%)}
+  .ui-left.open,.ui-right.open{opacity:1;transform:none;pointer-events:auto}
+  .ui-center{position:absolute;inset:0}
+  .lib-grid{grid-template-columns:1fr 1fr 1fr}
+  .brand span,.statusbar .only2d{display:none!important}
+}

@@ -1,0 +1,17 @@
+/* 设计令牌与全局重置 */
+:root{
+  --bg:#f3efe7; --paper:#f7f4ee; --panel:#fffdf9; --line:#e3dccf; --ink:#2b2824; --muted:#8a8174;
+  --accent:#b5653a; --accent-soft:#f3e3d8; --teal:#2f5d62;
+  /* ---------- 浮动卡片（磨砂玻璃） ---------- */
+  --glass:rgba(255,253,249,.72);
+  --glass-strong:rgba(255,253,249,.9);
+  --glass-line:rgba(227,220,207,.85);
+  --card-radius:14px;
+  --card-shadow:0 10px 30px rgba(60,45,30,.16),0 1px 2px rgba(60,45,30,.07);
+  --ui-gap:4px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;overscroll-behavior:none;touch-action:manipulation;
+  -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
+  font:13px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+button,input,select{font:inherit;color:inherit}

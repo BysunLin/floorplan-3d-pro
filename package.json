@@ -1,0 +1,24 @@
+{
+  "name": "floorplan-3d-pro",
+  "private": true,
+  "packageManager": "pnpm@12.11.2",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "户型装修设计 (Floor Plan Designer) — Vue3 + Vite + Three.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:single": "vite build --mode single",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "pinia": "^4.1.0",
+    "three": "^0.160.0",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.0",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

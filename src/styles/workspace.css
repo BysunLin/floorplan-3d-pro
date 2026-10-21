@@ -1,0 +1,124 @@
+/* 工作区：2D 画布 / 3D 场景 / 辅助浮层 / 选择工具条 */
+#plan{width:100%;height:100%;display:block;touch-action:none;cursor:default}
+#plan.panning{cursor:grabbing}
+#plan.tool-measure{cursor:crosshair}
+#plan.tool-region{cursor:crosshair}
+#plan .wall{pointer-events:none}
+#plan.tool-demolish .wall{pointer-events:all;cursor:pointer}
+#plan.tool-demolish .wall:hover{fill:#d9894f}
+/* 门 / 窗 / 推拉门：仅在拆改墙体模式下可点击（手指光标） */
+#plan [data-open]{pointer-events:none}
+#plan.tool-demolish [data-open]{pointer-events:all;cursor:pointer}
+#plan.tool-select .room:hover{opacity:.82}
+#plan .furn{cursor:move}
+@media (hover:hover){#plan .furn:hover{filter:drop-shadow(0 0 2px rgba(181,101,58,.7))}}
+[data-handle]{cursor:pointer}
+[data-handle=size]{cursor:nwse-resize}
+/* ---------- 家具拖拽辅助：同类虚线框 / 对齐线 / 压墙警示 ---------- */
+#plan .assist-box{fill:none;stroke:var(--accent);stroke-width:1;stroke-dasharray:4 4;
+  vector-effect:non-scaling-stroke;opacity:.45}
+/* 边框延长线：比辅助框更实、更长，明确表示「可沿线吸附」 */
+#plan .assist-guide{stroke:#c0703c;stroke-width:1.3;stroke-dasharray:9 5;
+  stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.95}
+#plan .bad-box{fill:rgba(184,65,44,.08);stroke:#b8412c;stroke-width:2;stroke-dasharray:9 5;
+  vector-effect:non-scaling-stroke}
+#plan .bad-tip{fill:#b8412c;font-weight:600}
+/* ---------- 工作区辅助浮层（相对 .ui-center 定位） ---------- */
+.overlay-layer{pointer-events:none}   /* 布局位置由 AppShell 的 .ui-center 决定 */
+.overlay-layer>*{pointer-events:auto}
+/* 左右上角：收起的面板浮层按钮 + 楼层切换，同一行排布 */
+.overlay-corner{position:absolute;top:0;z-index:3;display:flex;align-items:center;gap:6px;
+  max-width:calc(100% - 8px);pointer-events:none}
+.overlay-corner.tl{left:0}
+.overlay-corner.tr{right:0}
+.overlay-corner>*{pointer-events:auto}
+.pane-chip{flex:none;display:flex;align-items:center;gap:6px;height:40px;padding:0 12px;cursor:pointer;
+  background:var(--glass-strong);border:1px solid var(--glass-line);border-radius:12px;box-shadow:var(--card-shadow);
+  color:var(--ink);font-size:12px;white-space:nowrap;
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.pane-chip .ico{font-size:14px;color:var(--accent)}
+.pane-chip:hover{border-color:var(--accent);color:var(--accent)}
+.scalebar{position:absolute;left:0;bottom:0;background:var(--glass-strong);border:1px solid var(--glass-line);
+  border-radius:10px;padding:6px 10px;font-size:12px;pointer-events:none;box-shadow:var(--card-shadow);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.scalebar .bar{height:6px;border:1.5px solid var(--ink);border-top:0;margin-top:3px}
+.modehint{position:absolute;left:50%;top:0;transform:translateX(-50%);background:rgba(43,40,36,.86);color:#fff;
+  padding:5px 12px;border-radius:20px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.modehint.show{opacity:.95}
+/* ---------- 楼层切换（Phase 1，仅 2D 视图） ---------- */
+.levelbar{display:flex;align-items:center;gap:6px;min-width:0;
+  background:var(--glass-strong);border:1px solid var(--glass-line);border-radius:12px;padding:4px;
+  box-shadow:var(--card-shadow);max-width:100%;overflow-x:auto;
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.levelbar .lv-list{display:flex;gap:4px}
+.levelbar .lv{min-width:44px;height:30px;padding:0 10px;border:1px solid transparent;border-radius:7px;
+  background:transparent;cursor:pointer;font-size:12px;color:var(--ink);white-space:nowrap}
+.levelbar .lv:hover{background:#f2ece2}
+.levelbar .lv.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+.levelbar .lv b{font-weight:600}
+/* 地下层：名称下加一条虚线，和地上层一眼区分 */
+.levelbar .lv.base{border-bottom:1px dashed var(--muted)}
+.levelbar .lv-add{flex:none;width:30px;height:30px;border:1px dashed var(--line);border-radius:7px;background:#fff;
+  cursor:pointer;font-size:16px;line-height:1;color:var(--muted)}
+.levelbar .lv-add:hover{border-color:var(--accent);color:var(--accent)}
+/* 「＋B」：新增地下层，比「＋」宽一点 */
+.levelbar .lv-add.b{width:auto;padding:0 8px;font-size:12px}
+.levelbar .lv-kind{flex:none;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:#fff;
+  cursor:pointer;font-size:12px;color:var(--muted);white-space:nowrap}
+.levelbar .lv-kind:hover{border-color:var(--accent);color:var(--accent)}
+.levelbar .lv-kind.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+/* 状态栏内容 */
+.statusbar{display:flex;gap:18px;align-items:center;height:34px;padding:0 14px;overflow:hidden;white-space:nowrap;
+  color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+#tip{overflow:hidden;text-overflow:ellipsis}
+.statusbar b{color:var(--ink);font-weight:500}
+/* ---------- 分段控件：2D / 3D 与 工具切换共用同一套样式 ---------- */
+.seg{padding:3px}
+.seg .btn{min-width:74px;padding:5px 10px;border-radius:6px;text-align:center;
+  transition:background .25s ease,color .25s ease,box-shadow .25s ease}
+.seg .btn.on{background:var(--accent);color:#fff;box-shadow:0 2px 6px rgba(181,101,58,.3)}
+.seg .btn.on:hover{background:var(--accent)}
+body.busy .seg{pointer-events:none}
+body.m3d .only2d,body:not(.m3d) .only3d{display:none!important}
+.only2d,.only3d{animation:fadeIn .45s ease both}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+#plan{transition:opacity .45s ease,transform .45s ease}
+main.is3d #plan{opacity:0;pointer-events:none}
+.scalebar{transition:opacity .3s}
+body.m3d .scalebar{opacity:0}
+#view3d{position:absolute;inset:0;opacity:0;visibility:hidden;transition:opacity .45s ease,visibility 0s linear .45s}
+main.is3d #view3d{opacity:1;visibility:visible;transition:opacity .45s ease}
+#view3d canvas{display:block;outline:none}
+#walkOverlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(30,28,25,.35);z-index:3;cursor:pointer}
+#walkOverlay>div{background:var(--glass-strong);border:1px solid var(--glass-line);border-radius:var(--card-radius);
+  box-shadow:var(--card-shadow);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  padding:22px 28px;text-align:center;max-width:360px}
+#walkOverlay h3{margin:0 0 6px}
+#walkOverlay p{margin:4px 0;color:var(--muted)}
+#cross{position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;z-index:2;display:none;pointer-events:none}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff;box-shadow:0 0 2px #000}
+#cross:before{left:6px;top:0;width:2px;height:14px}#cross:after{top:6px;left:0;height:2px;width:14px}
+#hint3d{position:absolute;left:50%;top:calc(var(--ui-top-h, 70px) + 22px);transform:translateX(-50%);background:rgba(43,40,36,.82);color:#fff;
+  border-radius:20px;padding:5px 14px;font-size:12px;z-index:2;pointer-events:none;white-space:nowrap;transition:opacity .4s}
+main.animating #hint3d{opacity:0}
+.rlabel{font-size:12px;font-weight:600;color:#2b2824;background:rgba(255,253,249,.9);border:1px solid var(--line);
+  border-radius:12px;padding:2px 9px;white-space:nowrap;pointer-events:none}
+.rlabel small{font-weight:400;color:var(--muted);margin-left:4px}
+/* ---------- 选中后的浮动工具条 ---------- */
+#fab{position:absolute;left:50%;bottom:0;transform:translate(-50%,12px);display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px;padding:5px;
+  background:var(--glass-strong);border:1px solid var(--glass-line);border-radius:14px;box-shadow:var(--card-shadow);
+  -webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
+  z-index:4;opacity:0;visibility:hidden;transition:opacity .2s,transform .2s,visibility 0s linear .2s;max-width:calc(100% - 24px)}
+.app.drawer-panel #fab{opacity:0;visibility:hidden}
+#fab.show{opacity:1;visibility:visible;transform:translate(-50%,0);transition:opacity .2s,transform .2s}
+#fab .name{padding:0 8px 0 6px;font-weight:600;max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#fab .btn{border:1px solid transparent}
+#fab .sep{width:1px;align-self:stretch;margin:4px 2px;background:var(--line)}
+/* ---------- 触屏漫游摇杆 ---------- */
+#joy{position:absolute;left:28px;bottom:calc(var(--ui-bottom-h, 44px) + 24px);width:130px;height:130px;border-radius:50%;background:rgba(255,253,249,.28);
+  border:2px solid rgba(255,255,255,.7);box-shadow:0 4px 18px rgba(0,0,0,.18);z-index:3;display:none;touch-action:none;backdrop-filter:blur(10px)}
+#joy i{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:rgba(255,253,249,.92);
+  box-shadow:0 2px 8px rgba(0,0,0,.25);pointer-events:none}
+#walkExit{position:absolute;right:16px;bottom:calc(var(--ui-bottom-h, 44px) + 24px);z-index:3;display:none}
+/* ---------- 触屏：加大点击区域 ---------- */
