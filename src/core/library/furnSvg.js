@@ -3,6 +3,7 @@
  *  坐标系：家具中心在 (0,0)，+x 向右，+y 向下（与平面图一致）。
  * ========================================================================== */
 import { tr } from '@/i18n.js';
+import { ICONS } from './assets/icons.js';
 
 function hex2rgb(h){
   h = h.replace('#', '');
@@ -40,6 +41,18 @@ function dirText(up, w, d, y){
 }
 
 export function furnSVG(t, w, d, c, sd = 1){
+  /* 自定义资产优先：assets/<type>/icon.js（参数化）或 icon.svg（见 assets/manifest.js）。
+   * 没有对应资产、或资产函数抛错时，退回下面的内置 case —— 保证任何情况下都有图例。 */
+  const custom = ICONS[t];
+  if (custom){
+    try {
+      const s = custom(w, d, c, sd);
+      if (s) return s;
+    } catch (e){
+      console.warn('[furnSVG] 自定义图标失败，回退内置图例：', t, e);
+    }
+  }
+
   const x = -w/2, y = -d/2, m = Math.min(w, d);
   switch (t){
     case 'bed': {
@@ -391,6 +404,52 @@ export function furnSVG(t, w, d, c, sd = 1){
         + `<circle r="${r*.26}" fill="none" ${ST} opacity=".8"/>`
         + ln(-r*.62, 0, -r*.3, 0, 'opacity=".7"') + ln(r*.3, 0, r*.62, 0, 'opacity=".7"')
         + ln(0, -r*.62, 0, -r*.3, 'opacity=".7"') + ln(0, r*.3, 0, r*.62, 'opacity=".7"');
+    }
+
+    /* ---------- 商业 · 公共 ---------- */
+    case 'shelf': {
+      // 货架：外框 + 分格（俯视像一排货位）
+      const n = Math.max(2, Math.round(w/600));
+      let s = rc(x, y, w, d, shade(c, 1.06), 'rx="10"');
+      for (let i = 1; i < n; i++) s += ln(x + w*i/n, y + 40, x + w*i/n, y + d - 40);
+      return s + pa(`M${x + 30} ${y + d/2}H${x + w - 30}`, 'none', DASH);
+    }
+    case 'cashier': {
+      // 收银台：台体 + 收银机 + 侧柜
+      let s = rc(x, y, w, d, c, 'rx="16"');
+      s += rc(x + w*.06, y + d*.22, Math.min(520, w*.28), d*.56, '#f7f7f5', 'rx="8"');
+      return s + rc(x + w*.72, y + 60, Math.min(560, w*.24), d - 120, shade(c, .88), 'rx="6"');
+    }
+    case 'signpost': {
+      // 导视立牌：深色板 + 三条白色信息条
+      const hz = w >= d, L = hz ? w : d, T = Math.min(w, d);
+      let s = rc(x, y, w, d, c, 'rx="8"');
+      for (let i = 0; i < 3; i++){
+        const len = L*(i === 2 ? .3 : .5), off = L*(i === 2 ? .22 : .26);
+        s += hz
+          ? rc(x + off, y + T*(.26 + i*.2), len, Math.max(30, T*.12), '#f2f4f5')
+          : rc(x + T*(.26 + i*.2), y + off, Math.max(30, T*.12), len, '#f2f4f5');
+      }
+      return s;
+    }
+    case 'bin': {
+      // 垃圾箱：桶身 + 内胆口
+      const r = Math.min(w, d)/2;
+      return `<circle r="${r*.92}" fill="${c}" ${ST}/><circle r="${r*.62}" fill="#f7f7f5" ${ST}/>`
+        + `<circle r="${r*.3}" fill="${shade(c, .8)}" ${ST}/>`;
+    }
+    case 'bench': {
+      // 长椅：座板 + 靠背虚线 + 支腿
+      const hz = w >= d, L = hz ? w : d, T = Math.min(w, d), bd = T*.42;
+      let s = hz ? rc(x, y + (T - bd)/2, L, bd, c, 'rx="30"') : rc(x + (T - bd)/2, y, bd, L, c, 'rx="30"');
+      s += hz ? ln(x + L*.1, y + (T + bd)/2, x + L*.9, y + (T + bd)/2, DASH)
+              : ln(x + (T + bd)/2, y + L*.1, x + (T + bd)/2, y + L*.9, DASH);
+      for (let i = 0; i < 3; i++){
+        const t = L*(.16 + i*.34) - L/2;
+        s += hz ? rc(t, y + T*.72, Math.min(90, L*.06), Math.min(60, T*.16), shade(c, .75))
+                : rc(x + T*.72, L/2 + t, Math.min(60, T*.16), Math.min(90, L*.06), shade(c, .75));
+      }
+      return s;
     }
 
     default: return rc(x, y, w, d, c);

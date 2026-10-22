@@ -20,7 +20,15 @@
 
         <template v-for="c in WALL_LIB" :key="c.cat">
           <h4>{{ tr(c.cat, c.en) }}</h4>
-          <div class="lib-grid">
+          <!-- 房间区域：区域绘制（与画墙一样，两点 / 拖拽拉出矩形） -->
+          <div v-if="c.region" class="lib-grid one">
+            <div class="item region" :class="{on: !!ui.regionDraw}" :title="regionTip" @click="toggleRegion">
+              <svg viewBox="0 0 120 80" v-html="REGION_ICON"></svg>
+              <b>{{ tr('区域绘制', 'Draw area') }}</b>
+              <small>{{ tr('两点 / 拖拽矩形', '2 points / drag') }}</small>
+            </div>
+          </div>
+          <div v-else class="lib-grid">
             <div
               v-for="it in c.items" :key="it.id"
               class="item" :class="{on: ui.wallItem === it.id}" :data-wall-item="it.id"
@@ -47,18 +55,6 @@
           />
           <button v-if="q" class="clear" :title="tr('清除', 'Clear')" @click="q = ''">×</button>
         </div>
-
-        <!-- 房间：区域绘制（仅选择模式） -->
-        <template v-if="showRoomCat">
-          <h4>{{ tr('房间', 'Room') }}</h4>
-          <div class="lib-grid one">
-            <div class="item region" :class="{on: !!ui.regionDraw}" :title="regionTip" @click="toggleRegion">
-              <svg viewBox="0 0 120 80" v-html="REGION_ICON"></svg>
-              <b>{{ tr('区域绘制', 'Draw area') }}</b>
-              <small>{{ tr('两点 / 拖拽矩形', '2 points / drag') }}</small>
-            </div>
-          </div>
-        </template>
 
         <template v-for="g in filtered" :key="g.cat">
           <h4>{{ nm(g.cat) }}</h4>
@@ -104,8 +100,7 @@ const { ui } = uiStore;
 const { is3D } = storeToRefs(uiStore);
 const { closeDrawers, setWallItem, startRegionDraw, cancelRegionDraw, collapsePane } = uiStore;
 
-/* ---------------- 房间 → 区域绘制 ---------------- */
-const showRoomCat = computed(() => !is3D.value && ui.tool === 'select' && !q.value.trim());
+/* ---------------- 墙体大类 → 区域绘制（拆改墙体面板） ---------------- */
 const REGION_ICON = `<rect x="13" y="13" width="94" height="54" fill="none" stroke="#b5653a" stroke-width="2.6" stroke-dasharray="8 5"/>`
   + `<circle cx="13" cy="13" r="5" fill="#b5653a"/><circle cx="107" cy="67" r="5" fill="#b5653a"/>`
   + `<path d="M13 76h94" stroke="#b5653a" stroke-width="2" opacity=".45"/>`;
@@ -126,13 +121,13 @@ const viewBoxOf = it => {
 const wallMode = computed(() => ui.tool === 'demolish');
 
 const wallTip = computed(() => tr(
-  '选一个组件，再在平面图上点击：墙体（含玻璃墙面）→ 点 A 点、再点 B 点（自动 90° 且不出外墙）；门窗 → 点在非承重墙、玻璃墙面或外墙上。不选组件时点击墙体 / 门窗即可选中。',
-  'Pick a component, then click on the plan: walls (glass walls included) → click point A then point B (always 90°, kept inside the envelope); doors/windows → click a partition, glass or exterior wall. With nothing selected, click a wall or opening to select it.'
+  '选一个组件，再在平面图上点击：墙体 → 点 A 点、再点 B 点（自动 90° 且不出外墙）；门窗 → 点在非承重墙或外墙上；房间区域 → 拖出矩形（或点 A、B 两点）。不选组件时点击墙体 / 门窗即可选中。墙面材质（含玻璃）在右侧属性面板里改。',
+  'Pick a component, then click on the plan: walls → click point A then point B (always 90°, kept inside the envelope); doors/windows → click a partition or exterior wall; room areas → drag a rectangle (or click A then B). With nothing selected, click a wall or opening to select it. Wall materials (glass included) are set in the right panel.'
 ));
 
 const wallHint = computed(() => tr(
-  '门窗可加在非承重墙 / 玻璃墙面 / 外墙（浅灰、淡蓝或外墙色，选中门窗组件时会绿色高亮）上，承重墙（黑色）不可开洞；开洞会把该段墙裁剪成独立墙段（中部→2 段，靠边→1 段连接元素）。起点落在承重 / 非承重墙内会吸附到墙边并强制 90° 垂直绘制；画墙时按 Shift 可切换横 / 竖（未吸附时），右键取消。双开门洞口默认 1200 mm，比普通房门更宽。',
-  'Doors and windows fit partition, glass or exterior walls (light grey / pale blue / exterior grey; highlighted green when a door/window is selected) but not bearing walls (black); placing one splits that wall into separate segments (middle → 2, near edge → 1 connecting the element). Starting a wall inside a bearing/partition wall snaps to its edge and forces a 90° perpendicular draw; hold Shift while drawing to switch axis (when not snapped), right-click to cancel. Double doors use a 1200 mm opening — wider than a standard door.'
+  '门窗可加在非承重墙 / 外墙（浅灰或外墙色，选中门窗组件时会绿色高亮）上，承重墙（黑色）不可开洞；开洞会把该段墙裁剪成独立墙段（中部→2 段，靠边→1 段连接元素）。起点落在承重 / 非承重墙内会吸附到墙边并强制 90° 垂直绘制；画墙时按 Shift 可切换横 / 竖（未吸附时），右键取消。双开门洞口默认 1200 mm，比普通房门更宽。',
+  'Doors and windows fit partition or exterior walls (light grey / exterior grey; highlighted green when a door/window is selected) but not bearing walls (black); placing one splits that wall into separate segments (middle → 2, near edge → 1 connecting the element). Starting a wall inside a bearing/partition wall snaps to its edge and forces a 90° perpendicular draw; hold Shift while drawing to switch axis (when not snapped), right-click to cancel. Double doors use a 1200 mm opening — wider than a standard door.'
 ));
 
 const titleOf = it => it.kind === 'wall'

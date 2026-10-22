@@ -6,7 +6,7 @@
  * ========================================================================== */
 import { reactive, computed } from 'vue';
 import { defineStore } from 'pinia';
-import { PX_MM, BOUNDS } from '@/core/model/plan.js';
+import { PX_MM, BOUNDS, clampScale } from '@/core/model/plan.js';
 
 export const useViewStore = defineStore('view', () => {
   /* 视口变换：x0/y0 为画布左上角对应的户型坐标(mm)，s 为缩放（px/mm） */
@@ -23,22 +23,24 @@ export const useViewStore = defineStore('view', () => {
   /** 当前显示比例，如 1:60 */
   const ratioText = computed(() => '1:' + Math.round(1/(view.s * PX_MM)));
 
-  /** 比例尺：挑一个「长度不小于 60px」的整齐刻度 */
+  /** 比例尺：挑一个「长度不小于 60px」的整齐刻度（大平面会用到 10~100 m 档） */
   const scaleBar = computed(() => {
-    const nice = [100, 200, 500, 1000, 2000, 5000].find(v => v * view.s >= 60) || 5000;
+    const nice = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000]
+      .find(v => v * view.s >= 60) || 100000;
     return { px: nice * view.s, text: nice >= 1000 ? `${nice/1000} m` : `${nice} mm` };
   });
 
+  /** 适应窗口：铺满视口；大平面下把缩放下限放开到 MIN_SCALE（商场 / 厂房也能整屏看） */
   function fitView(){
     if (!size.w || !size.h) return;
-    view.s = Math.min(size.w/BOUNDS.w, size.h/BOUNDS.h);
+    view.s = clampScale(Math.min(size.w/BOUNDS.w, size.h/BOUNDS.h));
     view.x0 = BOUNDS.x - (size.w/view.s - BOUNDS.w)/2;
     view.y0 = BOUNDS.y - (size.h/view.s - BOUNDS.h)/2;
   }
 
   /** 以屏幕点 (mx,my) 为锚点缩放到 ns */
   function zoomAt(ns, mx, my){
-    ns = Math.max(.012, Math.min(2, ns));
+    ns = clampScale(ns);
     const px = view.x0 + mx/view.s, py = view.y0 + my/view.s;
     view.s = ns;
     view.x0 = px - mx/ns;

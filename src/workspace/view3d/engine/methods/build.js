@@ -4,6 +4,7 @@ import { ROOMS, WALLS, WINS, DOORS, SLIDES, LINTELS, esc } from '@/core/model/pl
 import { areaOf, roomArea, shapePieces, pointInShape, bboxOf } from '@/core/geometry/region.js';
 import { tr, nm } from '@/i18n.js';
 import { mat, buildFurniture, floorMat, waterMat, box, cyl } from '@/workspace/view3d/build/index.js';
+import { wallMat, isGlassMat, DEFAULT_WALL_MAT } from '@/core/library/wallMats.js';
 import { H, wx, wz, M } from '@/workspace/view3d/coords.js';
 import { DOOR_H, slideHead, DOOR_CASE, ceilLampGeo, CLIMB, CLIMB_TYPES, NO_OPENING_TYPES } from '../constants.js';
 
@@ -122,6 +123,20 @@ export const buildMethods = {
     });
   },
 
+  /** 某段墙是否按玻璃建模：旧存档的 'g' 玻璃墙面，或非承重墙把材质选成了玻璃 */
+  wallIsGlass(w, i){
+    if (w[4] === 'g') return true;
+    return isGlassMat(this.plan.wallMatId?.(i));
+  },
+
+  /** 墙面材质 → 墙盒六面材质；默认材质返回 null（沿用 wallBox 内置材质，保持原观感 / 投影） */
+  wallFaceMat(i){
+    const m = wallMat(this.plan.wallMatId?.(i));
+    if (m.id === DEFAULT_WALL_MAT) return null;
+    const base = mat(m.color, { roughness: m.rough, metalness: m.metal || 0 });
+    return [base, base, this.capMat, base, base, base];
+  },
+
   wallBox(r, yb, yt, m){
     if (yt - yb <= .001) return;
     const [x0, y0, x1, y1] = r;
@@ -235,7 +250,8 @@ export const buildMethods = {
         : Math.abs(wx0 - r[0]) <= BAND && Math.abs(wx1 - r[2]) <= BAND;
       if (!aligned) continue;
       const wa0 = hz ? wx0 : wy0, wa1 = hz ? wx1 : wy1;
-      if (isLo ? Math.abs(wa1 - at) <= TOL : Math.abs(wa0 - at) <= TOL) best = w[4];
+      if (isLo ? Math.abs(wa1 - at) <= TOL : Math.abs(wa0 - at) <= TOL)
+        best = this.wallIsGlass(w, k) ? 'g' : w[4];
     }
     return best;
   },
@@ -265,7 +281,7 @@ export const buildMethods = {
           if (cx < x0 || cx > x1 || cy < y0 || cy > y1) continue;
           const area = (x1 - x0)*(y1 - y0);
           if (!best || area < best.area)
-            best = { type: w[4], area, t: Math.min(x1 - x0, y1 - y0) };
+            best = { type: this.wallIsGlass(w, k) ? 'g' : w[4], area, t: Math.min(x1 - x0, y1 - y0) };
         }
         if (best) return { type: best.type, t: best.t };
       }
@@ -668,9 +684,12 @@ export const buildMethods = {
     const alpha = this.uiStore.opt.wallAlpha && this.uiStore.opt.mode !== 'walk';
     WALLS.forEach((w, i) => {
       if (this.plan.state.demolished.includes('w' + i)) return;
-      const seeThrough = alpha && w[4] !== 'g' && this.outerWallOf(w, ROOMS);
-      if (w[4] === 'g') this.glassWall(w, top);
-      else this.wallBox(w, -LV_OVERLAP, w[4] === 'low' ? Math.min(1, top) : top, seeThrough ? this.wallAlphaMat : undefined);
+      const glass = this.wallIsGlass(w, i);
+      const seeThrough = alpha && !glass && this.outerWallOf(w, ROOMS);
+      // 旧存档的 'g' 玻璃墙面：整片纯玻璃；材质选了玻璃：铝框 + 玻璃隔断
+      if (glass) w[4] === 'g' ? this.glassWall(w, top) : this.glassFill(w, -LV_OVERLAP, top);
+      else this.wallBox(w, -LV_OVERLAP, w[4] === 'low' ? Math.min(1, top) : top,
+        seeThrough ? this.wallAlphaMat : this.wallFaceMat(i));
       // 上方是夹层挑空：外墙通高到夹层顶（双层高空间）
       if (this.isLoftAbove && w[4] === 'e')
         this.wallBox(w, top - LV_OVERLAP, levelH + this.loftClearH, seeThrough ? this.wallAlphaMat : undefined);
@@ -1003,12 +1022,20 @@ export const buildMethods = {
       const [x0, y0, x1, y1] = w;
       const hh = w[4] === 'low' ? Math.min(1, top) : top;
       if (hh <= .001) return;
-      const seeThrough = alpha && full && w[4] !== 'g' && this.outerWallOf(w, s.rooms);
-      const m = full ? (w[4] === 'g' ? this.glassMat : (seeThrough ? this.wallAlphaMat : this.wallMat)) : ghost;
+      const mid = s.wallMats?.['w' + i];
+      const glass = w[4] === 'g' || isGlassMat(mid);
+      const seeThrough = alpha && full && !glass && this.outerWallOf(w, s.rooms);
+      const m = full
+        ? (glass ? this.glassMat
+          : seeThrough ? this.wallAlphaMat
+          : mid ? mat(wallMat(mid).color, { roughness: wallMat(mid).rough, metalness: wallMat(mid).metal || 0 })
+          : this.wallMat)
+        : ghost;
       // 墙根下探 LV_OVERLAP：压住下层墙顶（下层墙顶已退让 LV_SEAM），层间不会出现细缝
       const nb = new THREE.Mesh(new THREE.BoxGeometry(M(x1 - x0), hh + LV_OVERLAP, M(y1 - y0)), m);
       nb.position.set(wx((x0 + x1)/2), (hh - LV_OVERLAP)/2, wz((y0 + y1)/2));
-      nb.castShadow = full && !seeThrough; nb.receiveShadow = full && !seeThrough;
+      const solid = full && !seeThrough && !glass;
+      nb.castShadow = solid; nb.receiveShadow = solid;
       g.add(nb);
       if (full){
         this.colliders.push([wx(x0), wz(y0), wx(x1), wz(y1), elev, elev + hh]);
@@ -1141,8 +1168,12 @@ export const buildMethods = {
       lamp.position.set(wx(lampAt[0]), levelH - CEIL_GAP - .018, wz(lampAt[1]));
       lamp.visible = top >= levelH;
       this.lampG.add(lamp);
-      // 点光源会进入每个材质的着色循环：白天只给最大的几个房间挂（≤4），夜景则全部点亮
-      if (night || this.lampLights < 4){
+      // 点光源会进入每个材质的着色循环：数量上限由画质档位决定
+      // （低：白天 0 / 夜 4；中：4 / 8；高：4 / 不限）
+      const cap = this.quality
+        ? (night ? this.quality.lampNight : this.quality.lampDay)
+        : (night ? Infinity : 4);
+      if (this.lampLights < cap){
         this.lampLights++;
         const pl = new THREE.PointLight(0xffd9a8, 0, 7, 1.6);
         pl.position.set(wx(lampAt[0]), levelH - .25, wz(lampAt[1]));

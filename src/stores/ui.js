@@ -8,6 +8,7 @@
 import { reactive, ref, computed } from 'vue';
 import { defineStore } from 'pinia';
 import { narrow } from '@/core/model/plan.js';
+import { detectQuality } from '@/workspace/view3d/quality.js';
 import { setLang as applyLang } from '@/i18n.js';
 
 /** 可被选中 / 标记的墙面元素种类（墙体 + 门窗） */
@@ -29,6 +30,7 @@ export const useUiStore = defineStore('ui', () => {
     openHover: null,                 // 门窗放置预览：{rect, horiz, len}
     regionDraw: null,                // 区域绘制：null 或 { a:{x,y}|null, b:{x,y}|null }
     regionSnap: null,                // 区域绘制：吸附指示 {x, y, kind:'vertex'|'edge'|null}
+    menu: null,                      // 工作区右键菜单：{x, y}（屏幕坐标，null = 关闭）
     layers: { dims: true, labels: true, furn: true, grid: false, bearing: false, wallSnap: true, lower: true },
     /* 家具拖拽中的临时反馈（不进撤销、不入存档） */
     dragId: null,                    // 正在拖动的家具 id
@@ -45,7 +47,9 @@ export const useUiStore = defineStore('ui', () => {
     allFloors: true,           // 3D：整栋（其它楼层实色 + 家具） / 半透明体量
     wallAlpha: false,          // 3D：外墙半透明显示（便于看户型内部）
     roof: false,               // 3D：显示房顶（仅多楼层户型的顶层）
-    site: true                 // 3D：场地（室外大地面 / 地下层基坑土体）
+    site: true,                // 3D：场地（室外大地面 / 地下层基坑土体）
+    // 3D：画质档位 'low' / 'mid' / 'high'；初始值 = 「推荐」按当前设备挑出来的那一档
+    quality: detectQuality()
   });
 
   /** 清除拖拽辅助状态（结束拖动时调用） */
@@ -133,16 +137,33 @@ export const useUiStore = defineStore('ui', () => {
   const is3D       = computed(() => viewMode.value === '3d');
   const narrowMode = ref(narrow());
 
+  /* ======================= AI 助手 ======================= */
+  /** 右下角 AI 助手对话面板是否展开 */
+  const aiPanelOpen = ref(false);
+  /** 「AI 助手配置」弹窗是否展开（帮助菜单 / 面板齿轮共用） */
+  const aiConfigOpen = ref(false);
+
+  const openAiPanel  = () => { aiPanelOpen.value = true; };
+  const closeAiPanel = () => { aiPanelOpen.value = false; };
+  const openAiConfig = () => { aiConfigOpen.value = true; };
+  const closeAiConfig = () => { aiConfigOpen.value = false; };
+
   /* ======================= 3D 漫游输入 ======================= */
   const joy  = reactive({ x: 0, y: 0, id: null });
   const keys = reactive({});
   const walk = reactive({ touch: false, locked: false });
 
   /* ======================= 工具 / 选择 ======================= */
+  /* ======================= 工作区右键菜单 ======================= */
+  /** 在屏幕坐标 (x, y) 处打开右键菜单（切换选中项由调用方先做） */
+  function openMenu(x, y){ ui.menu = { x, y }; }
+  const closeMenu = () => { ui.menu = null; };
+
   function setTool(t){
     ui.tool = t;
     ui.mA = null;
     ui.mCur = null;
+    ui.menu = null;
     if (t !== 'select') cancelRegionDraw();
     // 进入拆改墙体：自动展开左侧面板（那里会换成墙面组件库）；离开则取消选中并清空标记
     if (t === 'demolish') drawer('lib', true);
@@ -152,7 +173,7 @@ export const useUiStore = defineStore('ui', () => {
   /* ======================= 区域绘制 ======================= */
   /** 进入区域绘制：点击 A、再点击 B（或按住拖出矩形），区域内墙体门窗自动扣除 */
   function startRegionDraw(){
-    ui.tool = 'select';
+    // 不切工具：入口在「拆改墙体」左侧面板的墙体大类下，就地进入绘制，面板保持可见
     ui.regionDraw = { a: null, b: null };
     ui.regionSnap = null;
     ui.mA = null; ui.mCur = null;
@@ -167,12 +188,13 @@ export const useUiStore = defineStore('ui', () => {
   const clearMeasure = () => { ui.mA = null; ui.mCur = null; };
 
   /** 单选：直接覆盖当前选中项（拆改模式下的墙面 / 门窗元素也只保留最后一个） */
-  const select = sel => { ui.sel = sel; };
+  const select = sel => { ui.sel = sel; ui.menu = null; };
 
   /** 几何变了以后，选中的下标可能失效，统一清掉 */
   function dropElemSel(){
     if (ui.sel && ELEM_KINDS.includes(ui.sel.kind)) ui.sel = null;
     ui.wallSnap = null;
+    ui.menu = null;
   }
 
   /* ======================= 墙面组件：画墙 / 开洞临时状态 ======================= */
@@ -202,9 +224,11 @@ export const useUiStore = defineStore('ui', () => {
 
   return {
     ui, opt, toast, panes, drawerOpen, viewMode, is3D, narrowMode,
+    aiPanelOpen, aiConfigOpen, openAiPanel, closeAiPanel, openAiConfig, closeAiConfig,
     joy, keys, walk,
     showToast, drawer, closeDrawers, clearDragAssist,
     paneCollapsed, collapsePane, expandPane, togglePane,
+    openMenu, closeMenu,
     setTool, clearMeasure, select, dropElemSel, setWallItem, cancelWallDraw,
     startRegionDraw, cancelRegionDraw,
     setLang

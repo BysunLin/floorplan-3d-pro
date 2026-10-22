@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { M, wx, wz, H } from '@/workspace/view3d/coords.js';
 import { mat, glassMat, metal, chrome, hwMat, blackMetal, mirror, ceramic, fabric, woodM, screenMat, glowMat, darker, lighter, rng } from './materials.js';
 import { sh, mesh, rot, box, rbox, cyl, lathe, rod, tube, blob, ring, shell, legs, pull, knob, fronts, vase, tableLamp, plate, showerModel, ovalPan } from './primitives.js';
+import { MODELS } from '@/core/library/assets/models.js';
+import { ASSET_META } from '@/core/library/assets/manifest.js';
 
 /* 停车位中央的大号 “P”：canvas 生成白色字形贴图（无光照材质，贴地显示），只建一次 */
 let parkLetter = null;
@@ -24,7 +26,42 @@ function parkLetterMat(){
   return parkLetter;
 }
 
+/** 统一收尾：世界坐标 + 顺时针旋转 + 命中 id（自定义资产与内置建模共用） */
+function placeGroup(g, f){
+  g.position.set(wx(f.cx), 0, wz(f.cy));
+  g.rotation.y = -f.rot * Math.PI/180;      // 平面顺时针旋转 → 绕 Y 轴负向
+  g.userData.fid = f.id;
+  return g;
+}
+
+/** 自定义资产建模函数收到的上下文：图元 + 材质 + 实例参数，避免资产里写 import */
+function assetCtx(f, w, d, c, sd){
+  return {
+    f, w, d, c, sd,
+    h: ((ASSET_META[f.type] && ASSET_META[f.type].h) || 800) / 1000,
+    THREE,
+    box, rbox, cyl, lathe, rod, tube, blob, ring, shell, legs, pull, knob, fronts,
+    plate, vase, tableLamp,
+    mat, glassMat, metal, chrome, hwMat, blackMetal, mirror, ceramic, fabric,
+    woodM, screenMat, glowMat, darker, lighter
+  };
+}
+
 export function buildFurniture(f, riseH = H, clipTop = Infinity){
+  /* 自定义资产优先（assets/<type>/model.js）：成功就返回，失败回退内置建模。
+   * 注意：这里必须兜住异常 —— 资产代码有问题时整个 3D 场景不能跟着挂。 */
+  const custom = MODELS[f.type];
+  if (custom){
+    try {
+      const w0 = M(f.w), d0 = M(f.d);
+      const out = custom(assetCtx(f, w0, d0, f.color || '#ddd', f.sdir < 0 ? -1 : 1));
+      if (out && out.isObject3D) return placeGroup(out, f);
+      console.warn('[buildFurniture] 自定义模型未返回 Object3D，回退内置建模：', f.type);
+    } catch (e){
+      console.warn('[buildFurniture] 自定义模型失败，回退内置建模：', f.type, e);
+    }
+  }
+
   const g = new THREE.Group(), w = M(f.w), d = M(f.d);
   const c = f.color || '#ddd', bz = -d/2;
   const sd = f.sdir < 0 ? -1 : 1;          // 楼梯类：1 上行（升到上一层）/ -1 下行（降到下一层）
@@ -1196,11 +1233,60 @@ export function buildFurniture(f, riseH = H, clipTop = Infinity){
       break;
     }
 
+    /* ---------- 商业 · 公共 ---------- */
+    case 'shelf': {
+      // 货架：铝型材立柱 + 三层木搁板 + 顶部价签条
+      const fm = metal(), wm2 = woodM('#c8b49a');
+      [-1, 1].forEach(sx => [-1, 1].forEach(sz =>
+        g.add(box(.04, 1.9, .04, fm, sx*(w/2 - .03), 0, sz*(d/2 - .03)))));
+      [.32, .86, 1.4].forEach(y => g.add(box(w - .02, .028, d - .02, wm2, 0, y, 0)));
+      g.add(box(w - .02, .09, .03, mat('#e9e6df', { roughness: .8 }), 0, 1.6, -d/2 + .02));
+      g.add(box(w - .02, .04, d - .02, fm, 0, 1.9, 0));
+      break;
+    }
+    case 'cashier': {
+      // 收银台：柜台体 + 台面 + 收银机 + 屏幕
+      g.add(rbox(w, .88, d*.9, mat(darker(c, .92), { roughness: .7 }), 0, 0, -.02, .03));
+      g.add(box(w + .03, .05, d*.94, ceramic('#f0ebe2'), 0, .88));
+      g.add(rbox(.34, .3, .3, mat('#2b2b2d', { roughness: .45 }), w*.24, .93, 0, .02));
+      g.add(box(.24, .15, .012, screenMat('#274a63'), w*.24, 1.1, -.08));
+      g.add(box(w*.92, .03, .05, metal(), 0, .93, d*.36));
+      break;
+    }
+    case 'signpost': {
+      // 导视立牌：底座 + 深色立板 + 三条发光信息条
+      const hz = w >= d, L = hz ? w : d, T = Math.max(.06, Math.min(w, d));
+      const dark = mat('#34383c', { roughness: .45, metalness: .25 });
+      g.add(box(hz ? L*.6 : T*1.1, .05, hz ? T*1.1 : L*.6, metal(), 0, 0, 0));
+      g.add(box(hz ? L : T, 1.85, hz ? T : L, dark, 0, .05, 0));
+      [.7, 1.05, 1.4].forEach(y => {
+        const len = L*(y > 1.3 ? .34 : .58);
+        const lm = mat('#f4f8fb', { roughness: .5, emissive: '#cfe2ee', emissiveIntensity: .5 });
+        g.add(hz ? box(len, .1, .012, lm, 0, y, -T/2 - .006)
+                 : box(.012, .1, len, lm, -T/2 - .006, y, 0));
+      });
+      break;
+    }
+    case 'bin': {
+      // 垃圾箱：桶身 + 桶盖 + 内胆口
+      const r = Math.min(w, d)/2;
+      g.add(cyl(r*.95, r*.88, .72, mat(c, { roughness: .6, metalness: .2 }), 0, 0, 0));
+      g.add(cyl(r*.99, r*.99, .05, blackMetal(), 0, .72, 0));
+      g.add(cyl(r*.66, r*.66, .045, mat('#22252a', { roughness: .85 }), 0, .735, 0));
+      break;
+    }
+    case 'bench': {
+      // 长椅：座板 + 靠背 + 两条钢腿
+      const hz = w >= d, L = hz ? w : d, T = Math.min(w, d), bd = T*.42, wk = woodM(c);
+      g.add(hz ? box(L, .06, bd, wk, 0, .42, 0) : box(bd, .06, L, wk, 0, .42, 0));
+      g.add(hz ? box(L, .1, .05, wk, 0, .72, bd/2 - .02) : box(.05, .1, L, wk, bd/2 - .02, .72, 0));
+      [-1, 1].forEach(s => g.add(hz
+        ? box(.06, .42, bd*.9, metal(), s*(L/2 - .3), 0, 0)
+        : box(bd*.9, .42, .06, metal(), 0, 0, s*(L/2 - .3))));
+      break;
+    }
     default: g.add(box(w, .8, d, c));
   }
-  g.position.set(wx(f.cx), 0, wz(f.cy));
-  g.rotation.y = -f.rot * Math.PI/180;      // 平面顺时针旋转 → 绕 Y 轴负向
-  g.userData.fid = f.id;
-  return g;
+  return placeGroup(g, f);
 }
 

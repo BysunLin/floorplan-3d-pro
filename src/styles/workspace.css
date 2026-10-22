@@ -64,6 +64,11 @@
 .levelbar .lv-add:hover{border-color:var(--accent);color:var(--accent)}
 /* 「＋B」：新增地下层，比「＋」宽一点 */
 .levelbar .lv-add.b{width:auto;padding:0 8px;font-size:12px}
+/* 「−」：删除当前楼层，只剩一层时禁用 */
+.levelbar .lv-del{flex:none;width:30px;height:30px;border:1px dashed var(--line);border-radius:7px;background:#fff;
+  cursor:pointer;font-size:16px;line-height:1;color:var(--muted)}
+.levelbar .lv-del:hover:not(:disabled){border-color:#b3372a;color:#b3372a}
+.levelbar .lv-del:disabled{opacity:.35;cursor:not-allowed}
 .levelbar .lv-kind{flex:none;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:#fff;
   cursor:pointer;font-size:12px;color:var(--muted);white-space:nowrap}
 .levelbar .lv-kind:hover{border-color:var(--accent);color:var(--accent)}
@@ -105,16 +110,25 @@ main.animating #hint3d{opacity:0}
 .rlabel{font-size:12px;font-weight:600;color:#2b2824;background:rgba(255,253,249,.9);border:1px solid var(--line);
   border-radius:12px;padding:2px 9px;white-space:nowrap;pointer-events:none}
 .rlabel small{font-weight:400;color:var(--muted);margin-left:4px}
-/* ---------- 选中后的浮动工具条 ---------- */
-#fab{position:absolute;left:50%;bottom:0;transform:translate(-50%,12px);display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px;padding:5px;
-  background:var(--glass-strong);border:1px solid var(--glass-line);border-radius:14px;box-shadow:var(--card-shadow);
+/* ---------- 工作区右键菜单（替代原来的底部选中浮窗） ---------- */
+#ctxMenu{position:fixed;z-index:20;min-width:168px;max-width:min(260px,calc(100vw - 16px));padding:5px;
+  display:flex;flex-direction:column;gap:1px;pointer-events:auto;
+  background:var(--glass-strong);border:1px solid var(--glass-line);border-radius:11px;box-shadow:var(--card-shadow);
   -webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
-  z-index:4;opacity:0;visibility:hidden;transition:opacity .2s,transform .2s,visibility 0s linear .2s;max-width:calc(100% - 24px)}
-.app.drawer-panel #fab{opacity:0;visibility:hidden}
-#fab.show{opacity:1;visibility:visible;transform:translate(-50%,0);transition:opacity .2s,transform .2s}
-#fab .name{padding:0 8px 0 6px;font-weight:600;max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#fab .btn{border:1px solid transparent}
-#fab .sep{width:1px;align-self:stretch;margin:4px 2px;background:var(--line)}
+  animation:ctxIn .12s ease}
+@keyframes ctxIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+#ctxMenu .ctx-title{padding:5px 9px 7px;font-size:12px;font-weight:600;color:var(--muted);
+  border-bottom:1px solid var(--line);margin-bottom:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ctxMenu .ctx-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:0;border-radius:7px;
+  background:transparent;color:var(--ink);font-size:13px;line-height:1.25;text-align:left;cursor:pointer;
+  transition:background .12s,color .12s}
+#ctxMenu .ctx-item:hover{background:#f2ece2}
+#ctxMenu .ctx-item.danger{color:#b3372a}
+#ctxMenu .ctx-item.danger:hover{background:#fbeae6}
+#ctxMenu .ctx-item .ico{flex:none;width:14px;text-align:center;font-size:12px;color:var(--muted)}
+#ctxMenu .ctx-item.danger .ico{color:inherit}
+#ctxMenu .ctx-item .lb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ---------- 触屏漫游摇杆 ---------- */
 #joy{position:absolute;left:28px;bottom:calc(var(--ui-bottom-h, 44px) + 24px);width:130px;height:130px;border-radius:50%;background:rgba(255,253,249,.28);
   border:2px solid rgba(255,255,255,.7);box-shadow:0 4px 18px rgba(0,0,0,.18);z-index:3;display:none;touch-action:none;backdrop-filter:blur(10px)}

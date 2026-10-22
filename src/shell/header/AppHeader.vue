@@ -15,6 +15,8 @@
           <button class="btn" id="planBtn" @click="act(openPlan)">{{ tr('从样板间开始', 'Start from a sample') }}</button>
           <div class="menu-sep"></div>
           <button class="btn" @click="act(() => fileEl?.click())">{{ tr('导入方案', 'Import plan') }}</button>
+          <button class="btn" @click="act(() => imgEl?.click())"
+            :title="tr('选择户型图片，自动识别墙体与房间', 'Pick a floor plan image to detect walls and rooms')">{{ tr('导入户型图(beta)', 'Import floor plan') }}</button>
           <button class="btn" @click="act(exportPNG)">{{ tr('导出图片', 'Export image') }}</button>
           <button class="btn" @click="act(exportJSON)">{{ tr('导出方案 JSON', 'Export plan JSON') }}</button>
           <div class="menu-sep"></div>
@@ -44,6 +46,9 @@
             <button class="btn" :title="tr('在现有最低层之下新增负一层（车库 / 地下室）', 'Add a basement level below the lowest floor')"
               @click="act(addBasement)">{{ tr('新增地下层', 'Add basement') }}</button>
           </div>
+          <button class="btn danger" :disabled="state.levels.length <= 1" :style="{opacity: state.levels.length <= 1 ? .4 : 1}"
+            :title="state.levels.length <= 1 ? tr('至少保留一层', 'At least one floor must remain') : tr('删除当前楼层及其家具 / 墙体（可撤销）', 'Delete the current floor with its furniture and walls (undoable)')"
+            @click="act(() => removeLevel(state.activeLevel))">{{ tr('删除当前楼层', 'Delete floor') }}</button>
           <div class="menu-sep"></div>
           <button class="btn danger" @click="act(resetPlan)"
             :title="tr('把当前户型的家具、墙体与门窗恢复为初始方案（不切换户型）', 'Restore furniture, walls and openings of the current layout (stays on the same layout)')">{{ tr('重置为默认方案', 'Reset to default') }}</button>
@@ -71,7 +76,11 @@
           </div>
           <div class="menu-sec only3d">{{ tr('剖切', 'Section') }}</div>
           <div class="menu-row only3d">
-            <button v-for="c in CUTS" :key="c.v" class="btn chip" :class="{on: opt.cut === c.v}" :data-cut="c.v" @click="setCut(c.v)">{{ c.label() }}</button>
+            <button v-for="c in CUTS" :key="c.v" class="btn chip" :class="{on: opt.cut === c.v}"
+              :data-cut="c.v" :title="c.title()" @click="setCut(c.v)">{{ c.label() }}</button>
+            <button class="btn chip" :class="{on: cutAtLevel}" data-cut="level"
+              :title="tr('按当前楼层净高剖切，切换楼层时自动跟随', 'Cut at the current storey height (follows the level)')"
+              @click="setCutLevel">{{ tr('层高', 'Level') }} {{ levelH.toFixed(1) }} m</button>
           </div>
           <div class="menu-sec only3d">{{ tr('显示', 'Display') }}</div>
           <div class="menu-row only3d">
@@ -79,6 +88,13 @@
             <button class="btn chip" :class="{on: opt.wallAlpha}"
               :title="tr('外墙半透明显示，便于查看户型内部', 'Show exterior walls translucent')"
               @click="toggleWallAlpha">{{ tr('半透明', 'Translucent') }}</button>
+          </div>
+          <div class="menu-sec only3d">{{ tr('性能', 'Performance') }}</div>
+          <div class="menu-row only3d">
+            <button v-for="q in QUALITY_ITEMS" :key="q.k" class="btn chip" :class="{on: opt.quality === q.k}"
+              :data-quality="q.k" :title="qualityTitle(q.k)" @click="setQuality(q.k)">
+              {{ q.k === 'auto' ? `${tr('推荐', 'Auto')}·${qualityName(recQuality)}` : tr(q.name, q.en) }}
+            </button>
           </div>
           <div class="menu-sec only3d">{{ tr('日照', 'Sun') }}</div>
           <label class="range only3d">
@@ -101,6 +117,8 @@
       <details class="menu">
         <summary class="btn">{{ tr('帮助 ▾', 'Help ▾') }}</summary>
         <div class="menu-pop">
+          <button class="btn" @click="act(openAiConfig)">{{ tr('AI 助手配置', 'AI assistant settings') }}</button>
+          <div class="menu-sep"></div>
           <button class="btn" @click="act(() => overviewOpen = true)">{{ tr('模型总览', 'Model overview') }}</button>
           <button class="btn" @click="act(() => helpOpen = true)">{{ tr('键盘快捷键', 'Keyboard shortcuts') }}</button>
           <button class="btn" @click="act(about)">{{ tr('关于', 'About') }}</button>
@@ -135,6 +153,49 @@
 
     <!-- 弹窗挂到 body：卡片有 backdrop-filter，会让内部 fixed 元素不再相对视口定位 -->
     <Teleport to="body">
+    <!-- 关于弹窗：技术栈 + 作者信息 -->
+    <div class="plan-mask" v-if="aboutOpen" @click.self="aboutOpen = false">
+      <div class="plan-dialog dlg-about" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+        <header class="dlg-head">
+          <div class="dlg-title">
+            <h3 id="aboutTitle">{{ tr('关于', 'About') }}</h3>
+            <p class="dlg-sub">{{ tr('户型装修设计 · 平面布置 / 3D 预览工具', 'Interior design · 2D layout & 3D preview') }}</p>
+          </div>
+          <button class="dlg-x" :title="tr('关闭', 'Close')" :aria-label="tr('关闭', 'Close')" @click="aboutOpen = false">×</button>
+        </header>
+
+        <div class="dlg-body about-body">
+          <section class="about-sec">
+            <h4>{{ tr('技术栈', 'Tech stack') }}</h4>
+            <ul class="about-tech">
+              <li><b>Vue 3</b><span>{{ tr('Composition API / SFC 组件', 'Composition API / SFC') }}</span></li>
+              <li><b>Pinia</b><span>{{ tr('状态管理', 'State management') }}</span></li>
+              <li><b>Vite 5</b><span>{{ tr('开发服务器与构建', 'Dev server & build') }}</span></li>
+              <li><b>Three.js</b><span>{{ tr('2D 方案实时 3D 渲染', 'Realtime 3D rendering') }}</span></li>
+              <li><b>MCP</b><span>{{ tr('AI 工具链（Model Context Protocol）', 'AI tooling (Model Context Protocol)') }}</span></li>
+              <li><b>Node.js</b><span>{{ tr('MCP 服务端与本地预览桥', 'MCP server & local preview bridge') }}</span></li>
+            </ul>
+          </section>
+
+          <section class="about-sec">
+            <h4>{{ tr('作者', 'Author') }}</h4>
+            <div class="about-row"><span class="about-k">{{ tr('姓名', 'Name') }}</span><b>linbaixiang</b></div>
+            <div class="about-row">
+              <span class="about-k">{{ tr('邮箱', 'Email') }}</span>
+              <a href="mailto:523067900@qq.com">523067900@qq.com</a>
+            </div>
+            <div class="about-row">
+              <span class="about-k">{{ 'Github' }}</span>
+              <a href="https://github.com/BysunLin/floorplan-3d-pro" target="_blank">https://github.com/BysunLin/floorplan-3d-pro</a>
+            </div>
+            
+          </section>
+        </div>
+
+        <p class="dlg-note">© 2026 linbaixiang · floorplan-3d-pro</p>
+      </div>
+    </div>
+
     <!-- 快捷键帮助弹窗 -->
     <div class="plan-mask" v-if="helpOpen" @click.self="helpOpen = false">
       <div class="plan-dialog dlg-help" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
@@ -220,9 +281,14 @@
 
     <!-- 模型总览 -->
     <ModelOverview v-if="overviewOpen" @close="overviewOpen = false"/>
+
+    <!-- 导入户型图：识别 → 预览 → 二次确认 -->
+    <ImportFloorPlanDialog v-if="importFile" :file="importFile"
+      @close="importFile = null" @apply="onImportApply"/>
     </Teleport>
 
     <input type="file" id="fileIn" ref="fileEl" accept=".json,application/json" hidden @change="onFile">
+    <input type="file" id="imgIn" ref="imgEl" accept="image/*" hidden @change="onImage">
   </div>
 </template>
 
@@ -234,7 +300,9 @@ import { usePlanStore, useUiStore, useViewStore } from '@/stores/index.js';
 import { setView } from '@/app/providers/useViewSwitch.js';
 import { exportProjectJSON, applyProjectDocument } from '@/app/providers/useProjectFile.js';
 import ModelOverview from '@/shell/dialog/ModelOverview.vue';
+import ImportFloorPlanDialog from '@/shell/dialog/ImportFloorPlanDialog.vue';
 import { getEngine } from '@/workspace/view3d/registry.js';
+import { QUALITY_ITEMS, qualityTitle, qualityName, detectQuality } from '@/workspace/view3d/quality.js';
 import { tr, lang } from '@/i18n.js';
 import { BOUNDS, ROOMS } from '@/core/model/plan.js';
 import { roomArea } from '@/core/geometry/region.js';
@@ -248,8 +316,11 @@ const { canUndo, canRedo, planId } = storeToRefs(plan);
 const { ui, opt, panes } = uiStore;
 const { is3D, drawerOpen, narrowMode } = storeToRefs(uiStore);
 const { fitView, zoomCenter, setRatio } = viewStore;
-const { undo, redo, clearLayout, resetPlan, applyPlan, addLevel, addBasement } = plan;
-const { setTool, togglePane, setLang } = uiStore;
+const { undo, redo, clearLayout, resetPlan, applyPlan, addLevel, addBasement, removeLevel } = plan;
+const { setTool, togglePane, setLang, openAiConfig } = uiStore;
+
+/** 「推荐」档位按钮上显示当前设备建议的那一档（点击即应用它） */
+const recQuality = detectQuality();
 
 const TOOLS = [
   { id: 'select',   label: () => tr('选择', 'Select'),     title: () => tr('选择 / 移动 (V)', 'Select / Move (V)') },
@@ -272,9 +343,12 @@ const MODES = [
   { k: 'walk',  label: () => tr('漫游', 'Walk') },
 ];
 
+/* 剖切高度：住宅 2.8m 即全高；商铺 / 商场层高更高，另给 3.5 / 4.5 两档，
+ * 「层高」档跟随当前楼层的净高（见 levels.js 的 followLevelCut） */
 const CUTS = [
-  { v: 2.8, label: () => tr('全高墙', 'Full walls') },
-  { v: 1.2, label: () => tr('剖切墙', 'Cut walls') },
+  { v: 2.8, label: () => '2.8 m', title: () => tr('全高墙（住宅层高 2.8m）', 'Full walls (2.8m residential storey)') },
+  { v: 3.5, label: () => '3.5 m', title: () => tr('剖切到 3.5m（商铺 / 裙房）', 'Cut at 3.5 m (shops / podium)') },
+  { v: 4.5, label: () => '4.5 m', title: () => tr('剖切到 4.5m（商场 / 大堂）', 'Cut at 4.5 m (mall / lobby)') },
 ];
 
 const TOGGLES = [
@@ -292,6 +366,8 @@ const LANGS = [
 ];
 
 const fileEl = ref(null);
+const imgEl = ref(null);
+const importFile = ref(null);      // 待识别的户型图片（只在内存里，不落盘）
 
 /* ---------------- 户型选择 ---------------- */
 const planOpen = ref(false);
@@ -311,6 +387,9 @@ const PLAN_GROUPS = [
   ]},
   { k: 'loft', label: () => tr('loft', 'Loft'), cards: [
     { id: 'loft', name: () => tr('loft 样板', 'Loft Sample') },
+  ]},
+  { k: 'mall', label: () => tr('商业', 'Commercial'), cards: [
+    { id: 'mall', name: () => tr('商场样板 · 三层', 'Mall Sample · 3 Floors') },
   ]},
   { k: 'custom', label: () => tr('自定义', 'Custom'), cards: [
     { id: 'custom', name: () => tr('自定义户型', 'Custom layout') },
@@ -361,6 +440,7 @@ function paneOpen(k){
 /* ---------------- 顶部菜单 ---------------- */
 const helpOpen = ref(false);
 const overviewOpen = ref(false);
+const aboutOpen = ref(false);
 
 function openPlan(){ planOpen.value = true; }
 
@@ -377,13 +457,21 @@ function pickTool(id){
 }
 
 function about(){
-  uiStore.showToast(tr('户型装修设计 · 平面布置 / 3D 预览工具', 'Interior design · 2D layout & 3D preview tool'));
+  aboutOpen.value = true;
 }
 
 /* ---------------- 交互 ---------------- */
 function toggleLayer(k){ ui.layers[k] = !ui.layers[k]; }
 
 function setCut(v){ if (opt.mode === 'walk') return; opt.cut = v; }
+
+/** 当前楼层净高（米）：用于「层高」剖切档 */
+const levelH = computed(() => ((state.levels.find(l => l.id === state.activeLevel)?.clearH) || 2800) / 1000);
+const cutAtLevel = computed(() => Math.abs(opt.cut - levelH.value) < .001);
+function setCutLevel(){
+  if (opt.mode === 'walk') return;
+  opt.cut = levelH.value;
+}
 
 /** 外墙半透明：只是显示方式，切换后重建一次建筑几何 */
 function toggleWallAlpha(){
@@ -402,6 +490,18 @@ function toggle3d(k){
 }
 
 function onSun(e){ opt.hour = +e.target.value; getEngine()?.applyLight(); }
+
+/** 画质档位（性能）：像素比 / 阴影 / 灯光数量 / 环境反射立即生效（抗锯齿需重进 3D）
+ *  「推荐」不是一个独立档位：按当前设备在低 / 中 / 高里挑一个直接用 */
+function setQuality(k){
+  const q = k === 'auto' ? detectQuality() : k;
+  if (opt.quality !== q){
+    opt.quality = q;
+    getEngine()?.applyQuality();
+  }
+  uiStore.showToast(tr(`画质已设为「${qualityName(q)}」${k === 'auto' ? tr('（推荐）', ' (recommended)') : ''}`,
+    `Quality set to ${qualityName(q)}${k === 'auto' ? ' (recommended)' : ''}`));
+}
 
 function setMode(m){ getEngine()?.setMode(m); }
 
@@ -478,6 +578,27 @@ async function onFile(e){
       : tr('已导入方案', 'Project imported'));
   } catch (err){
     uiStore.showToast(tr('导入失败：', 'Import failed: ') + (err?.message || tr('文件格式不正确', 'invalid file')));
+  }
+}
+
+/* ---------------- 导入户型图（图片 → 可编辑平面） ---------------- */
+function onImage(e){
+  const file = e.target.files[0];
+  e.target.value = '';                 // 允许重复选择同一张图
+  if (!file) return;
+  if (!/^image\//.test(file.type))
+    return uiStore.showToast(tr('请选择图片文件（PNG / JPG）', 'Please pick an image file (PNG / JPG)'));
+  importFile.value = file;             // 交给弹窗去识别 + 二次确认
+}
+
+function onImportApply({ geo, meta }){
+  importFile.value = null;
+  try {
+    plan.applyImportedGeo(geo, meta);
+    if (is3D.value) setView('2d');     // 导入结果就是平面图，直接切回 2D
+    fitView();
+  } catch (err){
+    uiStore.showToast(tr('导入失败：', 'Import failed: ') + (err?.message || ''));
   }
 }
 </script>

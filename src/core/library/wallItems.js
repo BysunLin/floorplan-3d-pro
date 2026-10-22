@@ -18,9 +18,10 @@ export const WALL_T = { n: 120, g: 120, b: 240, e: 240 };
 export const WALL_LIB = [
   { cat: '墙体', en: 'Walls', items: [
     { id: 'walln', kind: 'wall', sub: 'n', name: '非承重墙', en: 'Partition wall' },
-    { id: 'wallg', kind: 'wall', sub: 'g', name: '玻璃墙面', en: 'Glass wall'     },
     { id: 'wallb', kind: 'wall', sub: 'b', name: '承重墙',   en: 'Bearing wall'  },
   ]},
+  // 房间区域：区域绘制（两点 / 拖拽拉出矩形），排在墙体大类下面
+  { cat: '房间区域', en: 'Room areas', region: true, items: [] },
   { cat: '门', en: 'Doors', items: [
     { id: 'door',   kind: 'door',  sub: 'door',   name: '房门',   en: 'Door',         len: 800  },
     { id: 'entry',  kind: 'door',  sub: 'entry',  name: '入户门', en: 'Entry door',   len: 900  },
@@ -49,9 +50,6 @@ export function wallSVG(it){
            + '<path d="M-26 -5V5M26 -5V5" stroke="#8f897d" stroke-width="1"/>';
     case 'wallb':
       return '<rect x="-26" y="-6" width="52" height="12" fill="#26241f"/>';
-    case 'wallg':
-      return '<rect x="-26" y="-4" width="52" height="8" fill="#dceef5"/>'
-           + '<path d="M-26 -4H26M-26 4H26M-26 -4V4M26 -4V4M-9 -4V4M9 -4V4" stroke="#4f7394" stroke-width="1" fill="none"/>';
 
     case 'door':
     case 'entry': {

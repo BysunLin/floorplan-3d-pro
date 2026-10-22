@@ -2,6 +2,7 @@
  *  家具库目录 + 默认布置方案 + 本地持久化
  * ========================================================================== */
 import { ROOMS } from '@/core/model/plan.js';
+import { ASSET_MANIFEST } from './assets/manifest.js';
 
 /* 家具库：[类型, 名称, 宽, 深, 颜色] */
 export const LIB = [
@@ -42,6 +43,11 @@ export const LIB = [
     ['stair', '步梯', 1200, 3000, '#d3c8b6'], ['spiralstair', '旋转步梯', 1800, 1800, '#d3c8b6'],
     ['elevator', '电梯', 1600, 1500, '#c9ced3'], ['escalator', '电梯（扶梯）', 1100, 3600, '#c9ced3'],
     ['lstair', 'L型步梯', 3000, 3000, '#d3c8b6'], ['ramp', '车行坡道', 3000, 6000, '#b9b6b0']]},
+  // 商业 / 公共：商场、沿街商铺、大厅这类公共空间的道具（栏杆沿用隔断里的 railing 模型）
+  {cat: '商业 · 公共', items: [
+    ['shelf', '货架', 1800, 600, '#c9ced3'], ['cashier', '收银台', 2200, 700, '#e2cfb4'],
+    ['signpost', '导视立牌', 900, 200, '#3a3a3c'], ['bin', '垃圾箱', 400, 400, '#7d8a80'],
+    ['bench', '长椅', 1800, 500, '#c9a678'], ['railing', '栏杆', 2000, 100, '#9aa3a8']]},
   {cat: '户外 · 车库', items: [
     ['car', '轿车', 4600, 1800, '#c8ccd2'], ['suv', 'SUV', 4800, 1950, '#3f4753'],
     ['mpv', 'MPV', 5100, 1950, '#e2e5e8'], ['parking', '停车位', 2500, 5000, '#8d949c'],
@@ -51,6 +57,15 @@ export const LIB = [
     ['lane', '车道线', 6000, 150, '#f2f4f5'], ['crosswalk', '斑马线', 4000, 3000, '#f2f4f5'],
     ['manhole', '井盖', 700, 700, '#4a4d51']]},
 ];
+
+/* 自定义资产（core/library/assets/）合并进家具库：按 cat 分组追加，
+ * 面板、拖拽、typeColor、plan 校验因此都能自动看到新 type。 */
+for (const a of ASSET_MANIFEST){
+  const item = [a.type, a.name, a.w, a.d, a.color];
+  const grp = LIB.find(g => g.cat === a.cat);
+  if (grp) grp.items.push(item);
+  else LIB.push({ cat: a.cat, items: [item] });
+}
 
 const typeColor = t => {
   for (const c of LIB) for (const i of c.items) if (i[0] === t) return i[4];
@@ -130,8 +145,13 @@ export function defaultState(){
     levelData: {},
     // 墙体 / 门窗的自定义名称：{'w3':'主卧隔墙','nw2':'客厅窗'}
     elemNames: {},
+    // 墙面材质：{'w3':'glass'}（非承重墙，见 core/library/wallMats.js）
+    wallMats: {},
     // 内置户型几何版本：与计划定义的 geoVersion 不一致时丢弃旧的拆改增量
-    geoVersion: 1
+    geoVersion: 1,
+    // 「导入户型图」识别出的几何：planId 为 imported-* 时，刷新后据此重建户型。
+    // 只有几何（几十个矩形 / 多边形），不含原始图片。
+    customGeo: null
   };
 }
 
@@ -181,7 +201,9 @@ export function fixState(s){
   if (!s.activeLevel || !s.levels.some(l => l.id === s.activeLevel)) s.activeLevel = s.levels[0].id;
   s.levelData = s.levelData || {};
   s.elemNames = s.elemNames || {};
+  s.wallMats = s.wallMats || {};
   s.geoVersion = s.geoVersion || 1;
+  if (!s.customGeo || typeof s.customGeo !== 'object') s.customGeo = null;
   // 旧存档里的楼梯没有方向字段：统一按「上行」补齐
   for (const f of s.furniture) if (isClimbType(f.type) && f.sdir !== 1 && f.sdir !== -1) f.sdir = 1;
   return s;

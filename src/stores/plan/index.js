@@ -21,6 +21,7 @@ import { createFurniture } from './furniture.js';
 import { createWalls } from './walls.js';
 import { createRegions } from './regions.js';
 import { createPlans } from './plans.js';
+import { createImported } from './imported.js';
 
 export { ELEM_KINDS } from '@/stores/ui.js';
 export { isOpenableType } from '@/core/geometry/wallMath.js';
@@ -36,7 +37,8 @@ export const usePlanStore = defineStore('plan', () => {
     createFurniture(ctx),
     createWalls(ctx),
     createRegions(ctx),
-    createPlans(ctx)
+    createPlans(ctx),
+    createImported(ctx)
   ];
   for (const g of groups) Object.assign(ctx, g);
 
@@ -51,9 +53,13 @@ export const usePlanStore = defineStore('plan', () => {
     syncUserGeom: ctx.syncUserGeom, initGeometry: ctx.initGeometry,
     // 户型
     setPlan: ctx.setPlan, applyPlan: ctx.applyPlan, resetPlan: ctx.resetPlan, importPlan: ctx.importPlan,
+    applyImportedGeo: ctx.applyImportedGeo,
+    // 历史
+    clearHistory: ctx.clearHistory,
     // 楼层
     levels, activeLevel,
-    switchLevel: ctx.switchLevel, addLevel: ctx.addLevel, addBasement: ctx.addBasement, toggleLoft: ctx.toggleLoft,
+    switchLevel: ctx.switchLevel, addLevel: ctx.addLevel, addBasement: ctx.addBasement,
+    removeLevel: ctx.removeLevel, toggleLoft: ctx.toggleLoft,
     activeLevelMeta: ctx.activeLevelMeta, levelSnapshots: ctx.levelSnapshots,
     baseWalls: ctx.baseWalls,
     levelBelowSnapshot: ctx.levelBelowSnapshot, levelAreas: ctx.levelAreas,
@@ -79,6 +85,7 @@ export const usePlanStore = defineStore('plan', () => {
     // 元素（拆改）
     elemRect: ctx.elemRect, elemSize: ctx.elemSize, elemName: ctx.elemName,
     setElemName: ctx.setElemName, setElemSize: ctx.setElemSize,
+    wallMatId: ctx.wallMatId, setWallMat: ctx.setWallMat,
     openingPreviewAt: ctx.openingPreviewAt,
     fillOpening: ctx.fillOpening, convertWallTo: ctx.convertWallTo,
     convertWallFromBearing: ctx.convertWallFromBearing, isOuterWall: ctx.isOuterWall,

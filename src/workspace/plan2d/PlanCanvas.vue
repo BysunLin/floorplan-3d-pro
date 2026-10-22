@@ -71,12 +71,12 @@
     <!-- 区域绘制预览（A → B 矩形 + 扣掉墙体门窗后的区域 + 吸附指示） -->
     <g id="gRegion" pointer-events="none" v-html="regionSvg"></g>
 
-    <!-- 房间名 -->
+    <!-- 房间名（缩得很小时按比例放大字号，保证大平面也看得清） -->
     <g id="gLabels" pointer-events="none" :display="ui.layers.labels ? 'inline' : 'none'">
       <template v-for="r in labelled" :key="r.id">
-        <text :x="labelAt(r)[0]" :y="labelAt(r)[1]" font-size="250" font-weight="600"
+        <text :x="labelAt(r)[0]" :y="labelAt(r)[1]" :font-size="250*labK" font-weight="600"
           text-anchor="middle" fill="#2b2824" v-bind="HALO">{{ nm(state.rooms[r.id]?.name || r.name) }}</text>
-        <text :x="labelAt(r)[0]" :y="labelAt(r)[1] + 260" font-size="175"
+        <text :x="labelAt(r)[0]" :y="labelAt(r)[1] + 260*labK" :font-size="175*labK"
           text-anchor="middle" fill="#7d7366" v-bind="HALO">{{ isVoid(r) ? tr('挑空', 'Void') : roomArea(r).toFixed(2) + ' m²' }}</text>
       </template>
     </g>
@@ -124,6 +124,7 @@ import { shapePath, roomArea, shapePieces } from '@/core/geometry/region.js';
 import { planHasDims } from '@/core/plans/index.js';
 import { furnSVG } from '@/core/library/furnSvg.js';
 import { isClimbType } from '@/core/library/index.js';
+import { wallMat } from '@/core/library/wallMats.js';
 import { tr, nm } from '@/i18n.js';
 import { DEFS } from '@/workspace/plan2d/render/defs.js';
 import { staticDimsSvg, autoDimsSvg } from '@/workspace/plan2d/render/dims.js';
@@ -166,7 +167,9 @@ let ro = null, had = false;
 onBeforeUnmount(() => { if (ro) ro.disconnect(); setPlanSvg(null); });
 
 /* ======================= 静态片段 ======================= */
-const HALO = { stroke: '#fbf9f4', 'stroke-width': 45, 'paint-order': 'stroke', 'stroke-linejoin': 'round' };
+/* 文字自适应系数：屏幕字号小于约 10px 时按比例放大（商场这类大平面缩到 0.004 也能看清） */
+const labK = computed(() => Math.max(1, 10 / (250 * view.s)));
+const HALO = computed(() => ({ stroke: '#fbf9f4', 'stroke-width': 45*labK.value, 'paint-order': 'stroke', 'stroke-linejoin': 'round' }));
 
 /* 计算属性：用户新增的门窗 / 飘窗也要参与渲染（已删除的不画） */
 /* 非一层不展示入户门：上层只保留门洞，不画门扇 / 门槛 / 入户箭头 */
@@ -221,7 +224,7 @@ const lowerSvg = computed(() => {
 
 const iconOf = f => furnSVG(f.type, f.w, f.d, f.color, f.sdir ?? 1);
 const showLabel = f => Math.min(f.w, f.d) >= 380 && !NOLABEL.includes(f.type);
-const labelSize = f => Math.max(80, Math.min(170, Math.min(f.w, f.d)*.2));
+const labelSize = f => Math.max(80, Math.min(170, Math.min(f.w, f.d)*.2)) * labK.value;
 
 /* 选中门窗组件时，可开洞的墙（非承重墙 / 矮墙 / 外墙）高亮，提示可以开在这些墙上 */
 const hintOpenable = computed(() =>
@@ -242,14 +245,16 @@ const walls = computed(() => {
   // 已拆除、但被其它墙完全覆盖的墙段（如「延长合并」后残留的旧墙）无需再画
   if (dem && wallsCovered(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))) return null;
   let fill, extra = {};
+  // 非承重墙按「材质」着色（材质在属性面板里改；默认乳胶漆与原来一致）
+  const wm = wallMat(plan.wallMatId(i));
   if (k === 'low'){ fill = '#e9e3d8'; extra = { stroke: '#8f897d', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }; }
   else if (k === 'b') fill = ui.layers.bearing ? '#b8412c' : '#26241f';
   else if (k === 'e') fill = '#8f897d';
-  // 玻璃墙面：半透明淡蓝 + 细描边，与实体墙区分
-  else if (k === 'g'){
+  // 玻璃材质（含旧存档里的 'g' 玻璃墙面）：半透明淡蓝 + 细描边，与实体墙区分
+  else if (k === 'g' || wm.glass){
     fill = '#dceef5'; extra = { stroke: '#4f7394', 'stroke-width': 1.2, 'vector-effect': 'non-scaling-stroke', 'fill-opacity': .85 };
   }
-  else fill = '#a7a195';
+  else fill = wm.fill;
   if (dem){
     fill = 'rgba(198,91,58,.12)';
     extra = { stroke: '#c65b3a', 'stroke-width': 1.2, 'stroke-dasharray': '5 3', 'vector-effect': 'non-scaling-stroke' };

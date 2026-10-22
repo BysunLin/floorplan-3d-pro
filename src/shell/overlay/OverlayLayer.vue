@@ -25,7 +25,11 @@
       <div class="bar" :style="{width: scaleBar.px + 'px'}"></div>
     </div>
 
-    <FloatingBar/>
+    <!-- 右下角：AI 设计助手（与比例尺 / 楼层浮窗同一套定位，跟随属性面板） -->
+    <AiPanel/>
+
+    <!-- 右键菜单（替代原来的底部选中浮窗） -->
+    <ContextMenu/>
   </div>
 </template>
 
@@ -37,7 +41,8 @@
 import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import LevelBar from '@/shell/overlay/LevelBar.vue';
-import FloatingBar from '@/shell/overlay/FloatingBar.vue';
+import ContextMenu from '@/shell/overlay/ContextMenu.vue';
+import AiPanel from '@/ai/AiPanel.vue';
 import { useUiStore, useViewStore } from '@/stores/index.js';
 import { COARSE } from '@/core/model/plan.js';
 import { tr } from '@/i18n.js';

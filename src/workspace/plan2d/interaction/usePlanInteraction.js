@@ -6,7 +6,7 @@ import { storeToRefs } from 'pinia';
 import { usePlanStore, useUiStore, useViewStore } from '@/stores/index.js';
 import { getPlanSvg } from '@/shared/dom/planSvg.js';
 import { getEngine } from '@/workspace/view3d/registry.js';
-import { TAP, ROOMS, esc, axisPoint } from '@/core/model/plan.js';
+import { TAP, ROOMS, esc, axisPoint, clampScale } from '@/core/model/plan.js';
 import { areaOf } from '@/core/geometry/region.js';
 import { tr } from '@/i18n.js';
 
@@ -24,7 +24,7 @@ export function dropPoint(x, y){
   const r = stage?.getBoundingClientRect();
   if (!r || x < r.left || x > r.right || y < r.top || y > r.bottom) return null;
   // 落在悬浮卡片或浮层控件上时不接收拖放
-  if (document.elementFromPoint(x, y)?.closest('.glass-card,#fab,#levelBar,#walkOverlay,#joy,#walkExit')) return null;
+  if (document.elementFromPoint(x, y)?.closest('.glass-card,#ctxMenu,#levelBar,#walkOverlay,#joy,#walkExit')) return null;
   if (uiStore.is3D) return getEngine()?.groundAt(x, y) || null;
   const p = viewStore.toMM({ clientX: x, clientY: y }, svg());
   return { x: p.x, y: p.y, s: viewStore.view.s };
@@ -172,6 +172,11 @@ export function usePlanInteraction(){
 
     const p = toP(e), t = e.target;
 
+    /* 触屏长按 = 右键（选中指针下的元素并弹出菜单） */
+    if (e.pointerType !== 'mouse' && !ui.regionDraw && ui.tool !== 'measure'
+        && !(ui.tool === 'demolish' && activeWall.value) && !t.closest?.('[data-handle]'))
+      startLongPress(e);
+
     /* 区域绘制：点 A → 点 B（或按住拖出矩形），起终点都吸附墙体 / 已有区域 */
     if (ui.regionDraw){
       const q = snapRegionPoint(p, ui.regionDraw?.a || null);
@@ -286,7 +291,7 @@ export function usePlanInteraction(){
     if (pinch){
       if (touches.size < 2) return;
       const { d, c } = pinchInfo();
-      const ns = Math.max(.012, Math.min(2, pinch.s*d/pinch.d));
+      const ns = clampScale(pinch.s*d/pinch.d);
       view.s = ns;
       view.x0 = pinch.px - c[0]/ns;
       view.y0 = pinch.py - c[1]/ns;
@@ -339,6 +344,7 @@ export function usePlanInteraction(){
     }
 
     const far = Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) >= TAP;
+    if (far){ cancelLongPress(); uiStore.closeMenu(); }   // 一移动就不算长按（顺手收起菜单）
     if (drag.kind === 'measure'){
       if (far) drag.moved = true;
       ui.mCur = snapPoint(p, e.shiftKey);
@@ -385,14 +391,23 @@ export function usePlanInteraction(){
 
   function onUp(e){
     touches.delete(e.pointerId);
+    cancelLongPress();
     if (pinch){ if (touches.size < 2) pinch = null; return; }
+    if (lpFired){                     // 长按已弹出菜单：抬手不再触发「轻点选中」/ 平移
+      lpFired = false;
+      if (!drag || !drag.moved){       // 长按后没有拖动 → 丢弃这次指针操作
+        drag = null;
+        svg()?.classList.remove('panning');
+        return;
+      }
+    }
     endDrag(e.type === 'pointercancel');
   }
 
   function onWheel(e){
     const r = svg().getBoundingClientRect();
     const ns = view.s*Math.exp(-e.deltaY*(e.ctrlKey ? .01 : .0015));
-    const s = Math.max(.012, Math.min(2, ns));
+    const s = clampScale(ns);
     const px = view.x0 + (e.clientX - r.left)/view.s;
     const py = view.y0 + (e.clientY - r.top)/view.s;
     view.s = s;
@@ -407,14 +422,65 @@ export function usePlanInteraction(){
     }
   }
 
-  function onContextMenu(e){
-    if (ui.regionDraw){ e.preventDefault(); cancelRegionDraw(); return; }
-    if (ui.tool === 'measure'){
-      e.preventDefault();
-      ui.mA = null;
+  /**
+   * 「右键 / 触屏长按」公共逻辑：
+   * · 正在画区域 / 画墙 / 测量 → 取消当前绘制（不弹菜单）；
+   * · 否则按「当前模式的左键选中逻辑」选中指针下的元素（家具 → 房间；拆改模式 → 门窗 / 墙体），
+   *   空白处清空选中；随后在该位置打开右键菜单（操作与原来底部浮窗一致）。
+   */
+  function menuAt(e){
+    cancelLongPress();
+    if (ui.regionDraw){ cancelRegionDraw(); uiStore.closeMenu(); return; }
+    if (ui.wallA){ cancelWallDraw(); uiStore.closeMenu(); return; }
+    if (ui.tool === 'measure'){ ui.mA = null; ui.mCur = null; uiStore.closeMenu(); return; }
+
+    // 墙面组件仍处于「待放置」状态：右键先取消它（与原先右键取消的行为一致）
+    if (ui.tool === 'demolish' && activeWall.value) setWallItem(null);
+
+    const p = toP(e), t = e.target;
+    if (ui.tool === 'demolish'){
+      const open = t.closest?.('[data-open]');
+      const wallEl = t.closest?.('[data-wall]');
+      if (open){
+        const [k, idx] = open.dataset.open.split(':');
+        select({ kind: k, i: +idx });
+      } else if (wallEl){
+        select({ kind: 'wall', i: +wallEl.dataset.wall.slice(1) });
+      } else {
+        // DOM 命中不到时用几何兜底（墙很窄、被其它图层盖住的情况）
+        const wi = hitWall(p);
+        select(wi >= 0 ? { kind: 'wall', i: wi } : null);
+      }
+    } else {
+      const fid = t.closest?.('[data-fid]');
+      const roomEl = t.closest?.('[data-room]');
+      if (fid) select({ kind: 'furn', id: fid.dataset.fid });
+      else if (roomEl) select({ kind: 'room', id: roomEl.dataset.room });
+      else select(null);
     }
-    // 右键取消正在画的墙 / 取消选中的墙面组件
-    if (ui.wallA){ e.preventDefault(); cancelWallDraw(); }
+    uiStore.openMenu(e.clientX, e.clientY);
+  }
+
+  function onContextMenu(e){
+    e.preventDefault();                       // 禁用工作区里的浏览器原生菜单
+    menuAt(e);
+  }
+
+  /* 触屏没有右键：长按 0.5s 等价于右键（选中 + 打开菜单） */
+  let lpTimer = null, lpFired = false;
+  const LP_MS = 500;
+  function cancelLongPress(){
+    if (lpTimer){ clearTimeout(lpTimer); lpTimer = null; }
+  }
+  function startLongPress(e){
+    cancelLongPress();
+    lpFired = false;
+    const ev = { clientX: e.clientX, clientY: e.clientY, target: e.target };
+    lpTimer = setTimeout(() => {
+      lpTimer = null;
+      lpFired = true;
+      menuAt(ev);
+    }, LP_MS);
   }
 
   return { onDown, onMove, onUp, onWheel, onDblClick, onContextMenu };

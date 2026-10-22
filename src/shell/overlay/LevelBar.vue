@@ -8,6 +8,9 @@
         @click="pick(lv.id)"
       ><b>{{ levelName(lv) }}</b></button>
     </div>
+    <button class="lv-del" :disabled="levels.length <= 1"
+      :title="levels.length <= 1 ? tr('至少保留一层', 'At least one floor must remain') : tr('删除当前楼层（可撤销）', 'Delete current floor (undoable)')"
+      @click="remove">−</button>
     <button class="lv-add" :title="tr('新增楼层', 'Add floor')" @click="add">＋</button>
     <button class="lv-add b" :title="tr('新增地下层（负一层）', 'Add basement level')" @click="addB">＋B</button>
     <button class="lv-kind" :class="{ on: isLoft }" :title="tr('切换夹层 / 普通楼层', 'Toggle loft / floor')" @click="toggleLoft">
@@ -29,6 +32,7 @@ const isLoft = computed(() =>
 
 function pick(id){ if (id !== activeLevel.value) plan.switchLevel(id); }
 function add(){ plan.addLevel(); }
+function remove(){ plan.removeLevel(activeLevel.value); }
 function addB(){ plan.addBasement(); }
 function toggleLoft(){ plan.toggleLoft(activeLevel.value); }
 </script>

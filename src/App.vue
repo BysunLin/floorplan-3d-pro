@@ -1,5 +1,6 @@
 <template>
   <AppShell/>
+  <AiConfigDialog/>
   <ToastHost/>
 </template>
 
@@ -11,12 +12,14 @@
 import { watch, onMounted, onBeforeUnmount } from 'vue';
 import AppShell from '@/app/AppShell.vue';
 import ToastHost from '@/shared/ui/ToastHost.vue';
+import AiConfigDialog from '@/ai/AiConfigDialog.vue';
 import { storeToRefs } from 'pinia';
 import { useUiStore } from '@/stores/index.js';
 import { initLang } from '@/i18n.js';
 import { narrow } from '@/core/model/plan.js';
 import { installShortcuts } from '@/app/providers/useShortcuts.js';
 import { installFullscreenSync } from '@/app/providers/useFullscreen.js';
+import { maybeStartAgentBridge } from '@/bridge/agentBridge.js';
 
 const uiStore = useUiStore();
 const { viewMode, narrowMode, drawerOpen } = storeToRefs(uiStore);
@@ -24,6 +27,7 @@ const { drawer } = uiStore;
 
 let removeShortcuts = null;
 let removeFsSync = null;
+let stopAgentBridge = null;
 
 /* body.m3d —— 控制 only2d / only3d 的显示 */
 watch(viewMode, m => document.body.classList.toggle('m3d', m === '3d'), { immediate: true });
@@ -49,6 +53,8 @@ onMounted(() => {
   initLang();
   removeShortcuts = installShortcuts();
   removeFsSync = installFullscreenSync();
+  /* MCP 实时预览桥：只有 ?agent=1 或 localStorage 开启时才生效 */
+  stopAgentBridge = maybeStartAgentBridge();
   addEventListener('resize', onResize);
   document.addEventListener('pointerdown', onDocPointerDown);
   onResize();
@@ -57,6 +63,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   removeShortcuts?.();
   removeFsSync?.();
+  stopAgentBridge?.();
   removeEventListener('resize', onResize);
   document.removeEventListener('pointerdown', onDocPointerDown);
   document.body.classList.remove('m3d');

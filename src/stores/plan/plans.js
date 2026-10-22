@@ -1,5 +1,5 @@
 import { setGeometry } from '@/core/model/plan.js';
-import { makePlan, DEFAULT_PLAN, planName, planGeoVersion } from '@/core/plans/index.js';
+import { makePlan, DEFAULT_PLAN, planName, planGeoVersion, registerPlan, isRuntimePlan } from '@/core/plans/index.js';
 import { fixState, save as savePlan } from '@/core/library/index.js';
 import { tr, lang } from '@/i18n.js';
 import { getEngine } from '@/workspace/view3d/registry.js';
@@ -79,6 +79,9 @@ export function createPlans(ctx){
 
   /* 仅替换几何（用于刷新页面后还原已保存户型的墙体/房间，保留已编辑的家具） */
   function applyGeometryOnly(id){
+    // 「导入户型图」是运行时注册的户型，刷新后不在 PLANS 表里：先从存档的几何重建
+    if (!isRuntimePlan(id) && String(id || '').startsWith('imported-') && state.customGeo)
+      registerPlan(id, state.customGeo, tr('导入户型', 'Imported layout'));
     const g = makePlan(id);
     setGeometry(g);
     loadPlanGeos(g);
@@ -182,6 +185,10 @@ export function createPlans(ctx){
     // 导入的方案可能属于另一个户型：先把几何切到该户型并重置 base，
     // 否则它的墙体增量会叠加到当前户型的几何上，产生越界 / 错位的墙。
     let planChanged = false;
+    // 方案文件里带着导入户型的几何：先注册，下面 makePlan 才取得到
+    if (next.planId && !isRuntimePlan(next.planId)
+      && String(next.planId).startsWith('imported-') && next.customGeo)
+      registerPlan(next.planId, next.customGeo, tr('导入户型', 'Imported layout'));
     if (next.planId && next.planId !== planId.value){
       const g = makePlan(next.planId);
       setGeometry(g);

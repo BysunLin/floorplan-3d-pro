@@ -1,6 +1,7 @@
 import { computed } from 'vue';
 import { WALLS, WINS, DOORS, SLIDES, ROOMS, clamp, wallRect } from '@/core/model/plan.js';
 import { WALL_T, WALL_ITEMS, wallItem } from '@/core/library/wallItems.js';
+import { DEFAULT_WALL_MAT, WALL_MAT_IDS } from '@/core/library/wallMats.js';
 import { tr } from '@/i18n.js';
 import {
   spanIsHoriz, horizC, canOpen, spanOnWall, roomSideOf, splitWallForOpening,
@@ -470,12 +471,47 @@ export function createWalls(ctx){
     });
   }
 
+  /* ---------------- 墙面材质（仅非承重墙）：{'w3':'glass'} ---------------- */
+
+  /** 墙体下标 → 材质键：材质按墙下标存，墙段换下标时用 moveWallMat 搬运 */
+  const wallMatKey = i => 'w' + i;
+
+  /** 某段墙的材质 id（未设置 / 无效 → 默认材质） */
+  function wallMatId(i){
+    const id = state.wallMats?.[wallMatKey(i)];
+    return WALL_MAT_IDS.includes(id) ? id : DEFAULT_WALL_MAT;
+  }
+
+  /** 材质随墙体换下标（转承重墙 / 改尺寸会把墙换成用户墙，下标会变） */
+  function moveWallMat(from, to){
+    if (from === to || !state.wallMats) return;
+    const k = wallMatKey(from), v = state.wallMats[k];
+    if (!v) return;
+    delete state.wallMats[k];
+    state.wallMats[wallMatKey(to)] = v;
+  }
+
+  /** 改墙面材质（走撤销栈）；玻璃材质在 2D / 3D 都按玻璃墙渲染 */
+  function setWallMat(i, id){
+    mutate(() => {
+      if (!state.wallMats) state.wallMats = {};
+      const k = wallMatKey(i);
+      if (!id || id === DEFAULT_WALL_MAT) delete state.wallMats[k];
+      else state.wallMats[k] = id;
+    });
+  }
+
   /** 把户型自带的元素转成「用户元素」（标记原元素拆除 + 追加副本），返回新下标 */
   function ensureUserElem(k, i){
     if (i >= ELEM_BASE[k]()) return i;
     const id = ELEM_PFX[k] + i;
     if (!state.demolished.includes(id)) state.demolished.push(id);
-    if (k === 'wall'){ state.walls.push(WALLS[i].slice()); return base.walls + state.walls.length - 1; }
+    if (k === 'wall'){
+      state.walls.push(WALLS[i].slice());
+      const ni = base.walls + state.walls.length - 1;
+      moveWallMat(i, ni);                 // 材质按「墙下标」存，换下标后要跟着搬
+      return ni;
+    }
     if (k === 'win'){ state.wins.push(WINS[i].slice()); return base.wins + state.wins.length - 1; }
     if (k === 'door'){ state.doors.push({ ...DOORS[i], rect: DOORS[i].rect.slice() }); return base.doors + state.doors.length - 1; }
     if (k === 'slide'){ state.slides.push({ ...SLIDES[i], rect: SLIDES[i].rect.slice() }); return base.slides + state.slides.length - 1; }
@@ -720,6 +756,8 @@ export function createWalls(ctx){
       removeWallsOnly([i, ...m.absorbed]);
       state.walls.push([...m.rect, type]);
       ni = base.walls + state.walls.length - 1;     // 换成了用户墙，下标会变
+      if (type === 'n') moveWallMat(i, ni);          // 非承重墙保留原墙面材质
+      else if (state.wallMats) delete state.wallMats[wallMatKey(i)];
     });
     syncUserGeom();
     uiStore.showToast(type === 'b'
@@ -761,5 +799,5 @@ export function createWalls(ctx){
     uiStore.showToast(tr('已删除', 'Deleted'));
   }
 
-  return { ALONG_RATIOS, EDGE_PX, ELEM_BASE, OPEN_BASE, activeWall, addOpening, addWall, convertWallFromBearing, convertWallTo, coveredByWall, deleteElem, elemName, elemRect, elemSize, ensureUserElem, fillOpening, hitWall, isOuterWall, openingFillType, openingPreviewAt, projectWallT, removeOpeningOnly, removeWallsOnly, replaceWall, resolveWallStart, reverseDoor, sameLineOverlaps, setElemName, setElemSize, snapAlongHost, snapAlongWall, snapRatioBetween, snapWallEndpoint, snapWallLength, snapWallPoint, pointInHouse, wallSpanMerge, wallUnderPoint, writeElemRect };
+  return { ALONG_RATIOS, EDGE_PX, ELEM_BASE, OPEN_BASE, activeWall, addOpening, addWall, convertWallFromBearing, convertWallTo, coveredByWall, deleteElem, elemName, elemRect, elemSize, ensureUserElem, fillOpening, hitWall, isOuterWall, openingFillType, openingPreviewAt, projectWallT, removeOpeningOnly, removeWallsOnly, replaceWall, resolveWallStart, reverseDoor, sameLineOverlaps, setElemName, setElemSize, wallMatId, setWallMat, snapAlongHost, snapAlongWall, snapRatioBetween, snapWallEndpoint, snapWallLength, snapWallPoint, pointInHouse, wallSpanMerge, wallUnderPoint, writeElemRect };
 }

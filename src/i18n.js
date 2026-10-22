@@ -50,6 +50,12 @@ const NAMES_EN = {
   '路灯': 'Street Lamp', '灌木': 'Shrub', '樟树': 'Camphor Tree',
   '玄关': 'Foyer', '客卧': 'Guest Room', '家政间': 'Utility Room', '楼梯厅': 'Stair Hall', '起居二': 'Lounge',
   '花园草坪': 'Garden Lawn', '入户小径': 'Entry Path', '停车坪': 'Parking Lot', '花园别墅': 'Garden Villa',
+  // 商业 / 公共：商场样板与公共空间道具
+  '商业 · 公共': 'Commercial & Public', '货架': 'Shelving', '收银台': 'Cashier Counter',
+  '导视立牌': 'Wayfinding Sign', '垃圾箱': 'Trash Bin', '长椅': 'Bench', '栏杆': 'Railing',
+  '商场样板': 'Mall Sample', '北商铺': 'North Shop', '南商铺': 'South Shop',
+  '中央通道': 'Main Concourse', '中庭': 'Atrium', '卫生间': 'Restroom', '母婴室': 'Baby Room',
+  '商业': 'Commercial', '主力店': 'Anchor Store',
 };
 
 export const tr = (zh, en) => lang.value === 'en' ? en : zh;

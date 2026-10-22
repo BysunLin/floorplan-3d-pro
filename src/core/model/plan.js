@@ -21,6 +21,12 @@ export const TAP = COARSE ? 9 : 4;                              // 手指按下�
 export const narrow = () => matchMedia('(max-width:1100px)').matches;
 export const BOUNDS = reactive({ x: -1850, y: -1750, w: 15600, h: 14100 });
 
+/* 2D 缩放范围（px/mm）：下限放到 0.004（约 1px = 250mm），
+ * 1000px 宽的视口可一次看全约 250m —— 商场 / 厂房这类大平面也放得下。 */
+export const MIN_SCALE = .004;
+export const MAX_SCALE = 2;
+export const clampScale = s => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+
 /* ---------- 墙体 ---------- */
 // [x0,y0,x1,y1,类型]  b=承重(黑) e=外墙 n=可拆非承重 low=矮墙
 export const WALLS = reactive([
@@ -132,6 +138,15 @@ export const MATS = {
   soil:     {name: '种植土',     price: 40,  sw: '#6b5540'},
   // 挑空：无地板（仅夹层及以上楼层可选），2D 用虚线轮廓、3D 不生成地面/天花
   void:     {name: '挑空',       price: 0,   sw: 'repeating-linear-gradient(45deg,#e7e2da 0 6px,#d6d0c6 6px 12px)'},
+};
+
+/* 地面材料分组：以「水泥地(cement)」为界，之前的属室内、之后（含水泥地本身）属户外。
+ * 「挑空」不是地面材料，单独处理（仅夹层及以上楼层可选）。 */
+const FLOOR_KEYS = Object.keys(MATS).filter(k => k !== 'void');
+const CEMENT_AT = FLOOR_KEYS.indexOf('cement');
+export const MAT_GROUPS = {
+  indoor:  FLOOR_KEYS.slice(0, Math.max(0, CEMENT_AT)),
+  outdoor: FLOOR_KEYS.slice(Math.max(0, CEMENT_AT)),
 };
 
 /* ---------- 2D 平面上不显示名称的家具类型 ---------- */

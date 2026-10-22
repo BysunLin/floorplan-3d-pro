@@ -60,6 +60,11 @@ tr.click:hover td{background:#faf5ee}
 .btn.sm.danger{color:#b3372a;border-color:#f0d3cc;background:#fdf5f3}
 .btn.sm.danger:hover{background:#fbeae6}
 .mats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+/* 地面材料分组标题（室内 / 户外 / 其它） */
+.mat-grp{display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:11px;font-weight:600;
+  letter-spacing:.6px;color:var(--muted)}
+.mats + .mat-grp{margin-top:12px}
+.mat-grp:after{content:'';flex:1;height:1px;background:var(--line)}
 .mat{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px;background:#fff;cursor:pointer;text-align:left}
 .mat.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
 .mat i{width:26px;height:26px;border-radius:5px;border:1px solid rgba(0,0,0,.12);flex:none}
@@ -100,6 +105,21 @@ kbd{font:11px ui-monospace,Menlo,monospace;background:#f2ece2;border:1px solid v
 .dlg-x:hover{color:var(--accent);border-color:var(--accent);background:#fdf7f1}
 .dlg-body{margin-top:18px}
 .dlg-note{margin:18px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:12px;line-height:1.6;color:var(--muted)}
+/* 关于：技术栈 + 作者信息 */
+.plan-dialog.dlg-about{width:min(540px,100%)}
+.about-body{display:grid;gap:20px}
+.about-sec h4{margin:0 0 9px;font-size:11px;font-weight:600;letter-spacing:.8px;color:var(--muted)}
+.about-tech{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.about-tech li{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border:1px solid var(--line);
+  border-radius:9px;background:#fff}
+.about-tech b{font-size:12.5px;font-weight:600;color:var(--ink)}
+.about-tech span{font-size:11px;line-height:1.45;color:var(--muted)}
+.about-row{display:flex;align-items:baseline;gap:10px;font-size:12.5px}
+.about-row + .about-row{margin-top:7px}
+.about-row .about-k{flex:none;min-width:40px;font-size:12px;color:var(--muted)}
+.about-row b{font-weight:600;color:var(--ink)}
+.about-row a{color:var(--accent);text-decoration:none}
+.about-row a:hover{text-decoration:underline}
 /* 快捷键：按用途分四组，两列排布 */
 .kbd-groups{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:18px 32px}
 .kbd-group h4{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.8px;color:var(--muted)}
@@ -122,6 +142,7 @@ kbd{font:11px ui-monospace,Menlo,monospace;background:#f2ece2;border:1px solid v
 @media (max-width:760px){
   .plan-dialog{padding:18px 16px}
   .kbd-groups{grid-template-columns:1fr;gap:14px}
+  .about-tech{grid-template-columns:1fr}
   .plan-cards{grid-template-columns:1fr 1fr}
   .plan-card .thumb{height:120px}
 }
@@ -168,3 +189,52 @@ kbd{font:11px ui-monospace,Menlo,monospace;background:#f2ece2;border:1px solid v
   .plan-card .thumb{height:110px}
 }
 .range span{font-variant-numeric:tabular-nums;color:var(--ink)}
+
+/* ---------- 导入户型图 ---------- */
+.dlg-import{width:min(900px,100%)}
+.imp-center{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  min-height:260px;color:var(--muted);font-size:13px}
+.imp-spin{width:26px;height:26px;border:2px solid var(--line);border-top-color:var(--accent);
+  border-radius:50%;animation:impSpin .8s linear infinite}
+@keyframes impSpin{to{transform:rotate(360deg)}}
+.imp-fail p{margin:0;max-width:420px;line-height:1.7;text-align:center;color:var(--ink)}
+.imp-body{display:grid;grid-template-columns:1fr 250px;gap:18px;margin-top:16px}
+.imp-preview{position:relative;height:min(46vh,400px);background:#fff;border:1px solid var(--line);
+  border-radius:10px;overflow:hidden}
+.imp-preview img{width:100%;height:100%;display:block;object-fit:contain}
+.imp-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.imp-modes{display:flex;gap:6px}
+/* 「识别结果」视图：铺纸色底、隐藏原图，看起来就是一张平面图 */
+.imp-preview.is-plan{background:#f7f4ee}
+.imp-preview.is-plan img{visibility:hidden}
+.imp-preview.is-plan .imp-room{fill:#efe9dd;stroke:#d8d1c4;stroke-width:1}
+/* 与原图同一个容器 + 同样的等比缩放，叠加层才能严丝合缝对齐 */
+.imp-preview svg{position:absolute;inset:0;width:100%;height:100%}
+.imp-room{fill:rgba(214,152,74,.22);stroke:#d08a3a;stroke-width:1.5;vector-effect:non-scaling-stroke}
+.imp-wall{fill:#3f3a33}
+.imp-side{display:flex;flex-direction:column;gap:9px;min-width:0}
+.imp-stat{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:12px;
+  padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:#fff}
+.imp-stat span{color:var(--muted)}
+.imp-stat b{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.imp-field{display:flex;flex-direction:column;gap:5px;margin-top:4px;font-size:12px;color:var(--muted)}
+.imp-field input{padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#fff;
+  font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
+.imp-field input:focus{outline:none;border-color:var(--accent)}
+.imp-hint{margin:0;font-size:11px;line-height:1.6;color:var(--muted)}
+.imp-warn{margin:4px 0 0;padding:8px 10px;border-radius:8px;background:#fdf3e6;border:1px solid #f0d5ad;
+  font-size:11px;line-height:1.6;color:#8a5a1c}
+.imp-foot{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-top:18px;
+  padding-top:14px;border-top:1px solid var(--line)}
+.imp-note{margin:0;max-width:52%;font-size:11.5px;line-height:1.6;color:var(--muted)}
+.imp-actions{display:flex;gap:8px;flex:none}
+.btn.primary{border-color:var(--accent);background:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.primary:disabled{opacity:.45;cursor:not-allowed;filter:none}
+@media (max-width:760px){
+  .imp-body{grid-template-columns:1fr}
+  .imp-preview{height:34vh}
+  .imp-foot{flex-direction:column;align-items:stretch}
+  .imp-note{max-width:none}
+  .imp-actions{justify-content:flex-end}
+}

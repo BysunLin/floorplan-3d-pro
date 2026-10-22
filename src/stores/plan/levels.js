@@ -46,7 +46,7 @@ export function createLevels(ctx){
       .map(f => rotRectPoly(f));
   }
   /* ---------- 楼层（Phase 1）：当前楼层数据平铺在 state，其它楼层存在 state.levelData ---------- */
-  const LEVEL_FIELDS = ['furniture', 'rooms', 'demolished', 'measures', 'walls', 'wins', 'doors', 'slides', 'bays', 'regions', 'deletedRooms', 'regionSeed', 'elemNames'];
+  const LEVEL_FIELDS = ['furniture', 'rooms', 'demolished', 'measures', 'walls', 'wins', 'doors', 'slides', 'bays', 'regions', 'deletedRooms', 'regionSeed', 'elemNames', 'wallMats'];
   const cloneData = v => (v == null ? v : JSON.parse(JSON.stringify(v)));
 
   /** 当前楼层描述符：几何按楼层取（夹层可用独立几何），标高 / 层高取自楼层元信息 */
@@ -67,7 +67,7 @@ export function createLevels(ctx){
       walls: [], wins: [], doors: [], slides: [], bays: [],
       regions: [], deletedRooms: [],
       regionSeed: regionSeedKey(planId.value || DEFAULT_PLAN),
-      elemNames: {}
+      elemNames: {}, wallMats: {}
     };
   }
 
@@ -85,9 +85,20 @@ export function createLevels(ctx){
     delete state.levelData[state.activeLevel];
   }
 
+  /**
+   * 「层高」剖切档：如果剖切高度正好等于上一层的净高（说明用户选的是「层高」），
+   * 切到新楼层后自动跟随到新层净高；否则保持在 2.8 / 3.5 / 4.5 等固定档位。
+   */
+  function followLevelCut(prevH){
+    const opt = uiStore.opt;
+    const newH = (state.levels.find(l => l.id === state.activeLevel)?.clearH || 2800) / 1000;
+    if (Math.abs((opt.cut || 0) - prevH) < .001) opt.cut = newH;
+  }
+
   /** 切换楼层时清掉与「当前层」绑定的临时状态（选中、进行中的区域绘制 / 测量） */
   function resetLevelUi(){
     ui.sel = null;
+    ui.menu = null;
     ui.regionDraw = null;
     ui.regionSnap = null;
     ui.mA = null; ui.mCur = null;
@@ -109,9 +120,11 @@ export function createLevels(ctx){
   function switchLevel(id){
     if (!id || id === state.activeLevel) return;
     if (!state.levels.some(l => l.id === id)) return;
+    const prevH = (activeLevelMeta()?.clearH || 2800) / 1000;
     flushActive();
     state.activeLevel = id;
     hydrateActive();
+    followLevelCut(prevH);
     afterLevelChange();
   }
 
@@ -125,6 +138,7 @@ export function createLevels(ctx){
     const no = state.levels.reduce((m, l) => Math.max(m, l.no || 0), 0) + 1;
     const id = 'L' + no + '_' + Date.now().toString(36).slice(-4);
     const before = snap();
+    const prevH = (activeLevelMeta()?.clearH || 2800) / 1000;
     flushActive();
     // 新层直接叠在「最高一层的顶面」上：loft 夹层净高只有 2.2m 时不能按 2.8m 递推，
     // 否则夹层顶与新层地面之间会空出一条缝，外墙看起来全是镂空。
@@ -134,6 +148,7 @@ export function createLevels(ctx){
     state.levelData[id] = newLevelData();
     state.activeLevel = id;
     hydrateActive();
+    followLevelCut(prevH);
     syncUserGeom();                      // 先重建几何，再入栈 / 通知 3D
     resetLevelUi();
     commit(before);
@@ -155,6 +170,7 @@ export function createLevels(ctx){
       return;
     }
     const before = snap();
+    const prevH = (activeLevelMeta()?.clearH || 2800) / 1000;
     flushActive();
     const clearH = 2800;
     const bottom = state.levels.reduce((m, l) => Math.min(m, (l.elev || 0)), 0);
@@ -166,6 +182,7 @@ export function createLevels(ctx){
     state.levelData[id] = newLevelData();
     state.activeLevel = id;
     hydrateActive();
+    followLevelCut(prevH);
     syncUserGeom();
     resetLevelUi();
     commit(before);
@@ -176,6 +193,46 @@ export function createLevels(ctx){
     uiStore.showToast(tr(
       `已新增${depth === 1 ? '负一层' : `负${depth}层`}（沿用地上一层轮廓，可直接改墙 / 删房间）`,
       `Added basement B${depth} (inherits the plan outline)`));
+  }
+
+  /**
+   * 删除楼层（至少保留一层）：该层的家具 / 墙体 / 房间数据一并移除；
+   * 删的是当前层时自动落到相邻楼层（优先下面一层）。
+   * 进撤销栈，Ctrl+Z 可恢复整层数据。
+   */
+  function removeLevel(id){
+    const target = id || state.activeLevel;
+    const idx = state.levels.findIndex(l => l.id === target);
+    if (idx < 0) return;
+    if (state.levels.length <= 1){
+      uiStore.showToast(tr('至少需要保留一层', 'At least one floor must remain'));
+      return;
+    }
+    const lv = state.levels[idx];
+    const count = (target === state.activeLevel ? state.furniture : (state.levelData[target]?.furniture || [])).length;
+    if (!confirm(tr(
+      `删除「${lv.name}」？${count ? `该层的 ${count} 件家具 / 家电、` : '该层的'}墙体与房间信息会一并移除，可用 Ctrl+Z 撤销。`,
+      `Delete "${lv.name}"? ${count ? `Its ${count} furniture / appliance items, ` : 'Its '}walls and rooms will be removed too. You can undo this.`))) return;
+
+    const before = snap();
+    const wasActive = target === state.activeLevel;
+    const prevH = (activeLevelMeta()?.clearH || 2800) / 1000;
+    flushActive();
+    // 楼层按标高排序：优先落到下面一层，没有地下 / 下层时落到上一层
+    const next = state.levels[idx - 1] || state.levels[idx + 1] || state.levels[0];
+    state.levels.splice(idx, 1);
+    delete state.levelData[target];
+    if (wasActive) state.activeLevel = next.id;   // 删的不是当前层就留在原层
+    hydrateActive();                     // 顺带把当前层数据从 levelData 取回平铺
+    followLevelCut(prevH);
+    syncUserGeom();                      // 楼层变了，楼梯开洞 / 下层虚影都要重算
+    resetLevelUi();
+    commit(before);
+    const engine = getEngine();
+    engine?.sync(true);
+    engine?.resetView?.();
+    planVersion.value++;
+    uiStore.showToast(tr(`已删除「${lv.name}」`, `Deleted "${lv.name}"`));
   }
 
   /** 把当前层的房间轮廓转成区域（楼板）：夹层是「单独的平面」，没有区域时用它兜底 */
@@ -246,6 +303,7 @@ export function createLevels(ctx){
         lintels: geo.lintels, rooms: geo.rooms,
         furniture: deltas.furniture || [],
         roomsMeta: deltas.rooms || {},
+        wallMats: deltas.wallMats || {},
         regions: deltas.regions || [],
         demolished: deltas.demolished || []
       };
@@ -295,5 +353,5 @@ export function createLevels(ctx){
   /** 户型基准墙体（夹层不做临边栏杆时用它跳过建筑外轮廓） */
   const baseWalls = () => geo.levelGeo.walls;
 
-  return { LEVEL_FIELDS, activeLevelMeta, addBasement, addLevel, afterLevelChange, baseWalls, cloneData, currentLevel, flushActive, hydrateActive, levelAreas, levelBelowSnapshot, levelSnapshots, newLevelData, regionsFromRooms, resetLevelUi, rotRectPoly, sortLevels, stairOpeningsFor, switchLevel, toggleLoft };
+  return { LEVEL_FIELDS, activeLevelMeta, addBasement, addLevel, afterLevelChange, baseWalls, cloneData, currentLevel, flushActive, hydrateActive, levelAreas, levelBelowSnapshot, levelSnapshots, newLevelData, regionsFromRooms, removeLevel, resetLevelUi, rotRectPoly, sortLevels, stairOpeningsFor, switchLevel, toggleLoft };
 }

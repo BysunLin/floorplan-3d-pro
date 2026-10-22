@@ -38,7 +38,8 @@ export function installShortcuts(){
     else if (k === 'r') plan.rotateSel(e.shiftKey ? -90 : 90);
     else if (k === 'delete' || k === 'backspace'){ e.preventDefault(); plan.deleteSel(); }
     else if (k === 'escape'){
-      if (ui.regionDraw) uiStore.cancelRegionDraw();
+      if (ui.menu) uiStore.closeMenu();
+      else if (ui.regionDraw) uiStore.cancelRegionDraw();
       else if (ui.mA){ ui.mA = null; }
       else { if (ui.tool !== 'select') uiStore.setTool('select'); uiStore.select(null); }
     }

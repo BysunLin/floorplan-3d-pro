@@ -7,25 +7,40 @@ import { WALLS, WINS, DOORS, SLIDES, LINTELS, COARSE, TAP } from '@/core/model/p
 import { tr } from '@/i18n.js';
 import { mat, setEnv, setEnvK, setGlassMat, setFrameMat, buildFurniture } from '@/workspace/view3d/build/index.js';
 import { H, FOV, wx, wz } from '@/workspace/view3d/coords.js';
+import { qualityPreset } from '@/workspace/view3d/quality.js';
 import { EYE_H, CLIMB_TYPES } from '../constants.js';
+
+/* 画质档位 → three 的阴影贴图类型 */
+const SHADOW_TYPES = {
+  basic: THREE.BasicShadowMap,
+  pcf:   THREE.PCFShadowMap,
+  soft:  THREE.PCFSoftShadowMap
+};
 
 /* View3D.prototype 的方法组：由 engine.js 统一挂载 */
 export const lifecycleMethods = {
+  /** 高 DPI 屏下的渲染像素比：按画质档位封顶（低 1 / 中 1.5 / 高 2） */
+  dprFor(q){
+    const dpr = typeof devicePixelRatio === 'number' ? devicePixelRatio : 1;
+    return Math.min(dpr, q?.dpr || 1.5);
+  },
+
   init(){
     if (this.inited) return;
     this.inited = true;
 
     const SW = () => this.stage.clientWidth, SH = () => this.stage.clientHeight;
+    // 画质档位（性能）：'auto' 时按平台与机器配置自动落到低 / 中 / 高
+    const q = this.quality = qualityPreset(this.uiStore.opt.quality);
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: q.aa,                 // 创建期固定：运行期切档需重新进入 3D 才生效
       powerPreference: 'high-performance'
     });
-    // 高 DPI 屏下按 1.75 倍封顶：像素量比 2 倍少 ~23%，肉眼几乎无差别
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    this.renderer.setPixelRatio(this.dprFor(q));
     this.renderer.setSize(SW(), SH());
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = q.shadow;
+    this.renderer.shadowMap.type = SHADOW_TYPES[q.shadowType] || THREE.PCFSoftShadowMap;
     // 静态场景：阴影贴图只在几何 / 光照变化时重算（否则每帧都要重画一遍阴影，开销很大）
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -54,8 +69,8 @@ export const lifecycleMethods = {
 
     this.hemi = new THREE.HemisphereLight(0xfff8ee, 0xb9a88f, 1.1);
     this.sun  = new THREE.DirectionalLight(0xfff1dd, 2.6);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.setScalar(COARSE ? 1024 : 2048);
+    this.sun.castShadow = q.shadow;
+    this.sun.shadow.mapSize.setScalar(q.shadowSize || (COARSE ? 1024 : 2048));
     Object.assign(this.sun.shadow.camera, { left: -11, right: 11, top: 11, bottom: -11, near: 1, far: 60 });
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.02;
@@ -69,9 +84,12 @@ export const lifecycleMethods = {
     this.ground.receiveShadow = true;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.ground);
 
-    const pm = new THREE.PMREMGenerator(this.renderer);
-    setEnv(pm.fromScene(new RoomEnvironment(), .04).texture);
-    pm.dispose();
+    // 环境反射（PMREM）：低画质跳过（省掉一次离屏渲染，且材质不挂 envMap）
+    if (q.env){
+      const pm = new THREE.PMREMGenerator(this.renderer);
+      setEnv(pm.fromScene(new RoomEnvironment(), .04).texture);
+      pm.dispose();
+    } else setEnv(null);
 
     this.glassMat = new THREE.MeshPhysicalMaterial({
       color: 0xcfe6ef, roughness: .05, transparent: true,
@@ -181,6 +199,7 @@ export const lifecycleMethods = {
     });
 
     this._ro = new ResizeObserver(() => {
+      this.renderer.setPixelRatio(this.dprFor(this.quality));   // 换屏 / 缩放窗口后档位像素比不丢
       this.renderer.setSize(this.stage.clientWidth, this.stage.clientHeight);
       this.labelRenderer.setSize(this.stage.clientWidth, this.stage.clientHeight);
       this.camera.aspect = this.stage.clientWidth / this.stage.clientHeight;
@@ -228,6 +247,26 @@ export const lifecycleMethods = {
     if (this.roofG) this.roofG.visible = this.grow > .99;    // 房顶随生长动画一起出现 / 收起
   },
 
+  /* ======================= 画质档位（性能） ======================= */
+  /**
+   * 切换画质档位：像素比 / 阴影贴图 / 点光源数量 / 环境反射强度。
+   * 抗锯齿是渲染器创建期参数，运行期切档时保持不变（重新进入 3D 后按新档位生效）。
+   */
+  applyQuality(){
+    if (!this.inited) return;                  // 还没进过 3D：init() 会直接按新档位建
+    const q = this.quality = qualityPreset(this.uiStore.opt.quality);
+    this.renderer.setPixelRatio(this.dprFor(q));
+    this.renderer.setSize(this.stage.clientWidth, this.stage.clientHeight);
+    this.renderer.shadowMap.enabled = q.shadow;
+    this.renderer.shadowMap.type = SHADOW_TYPES[q.shadowType] || THREE.PCFSoftShadowMap;
+    this.sun.castShadow = q.shadow;
+    // 改阴影贴图分辨率需要丢掉旧的贴图才会真正重建
+    if (this.sun.shadow.map){ this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+    this.sun.shadow.mapSize.setScalar(q.shadowSize);
+    this.applyNight();                         // 重建顶灯（数量受档位限制）+ 套用光照（含 envK）
+    this.needsRender = true;
+  },
+
   /* ======================= 日照 / 夜景 ======================= */
   /** 切夜景 / 日景时调用：重建顶灯与全部点光源，再套用环境光 */
   applyNight(){
@@ -256,7 +295,8 @@ export const lifecycleMethods = {
       else o.material.emissiveIntensity = this.uiStore.opt.night ? 2 : .3;
     });
     this.renderer.toneMappingExposure = this.uiStore.opt.night ? 1.25 : 1.05;
-    setEnvK(this.uiStore.opt.night ? .15 : 1);
+    // 低画质不挂环境反射（envK=0），其余按昼夜取强度
+    setEnvK((!this.quality || this.quality.env) ? (this.uiStore.opt.night ? .15 : 1) : 0);
     this.renderer.shadowMap.needsUpdate = true;      // 太阳位置变了：重算一次阴影
     this.needsRender = true;
   },
@@ -266,6 +306,7 @@ export const lifecycleMethods = {
     this.init();
     this.active = true;
     const SW = () => this.stage.clientWidth, SH = () => this.stage.clientHeight;
+    this.renderer.setPixelRatio(this.dprFor(this.quality));
     this.renderer.setSize(SW(), SH());
     this.labelRenderer.setSize(SW(), SH());
     this.camera.aspect = SW()/SH();

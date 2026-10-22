@@ -21,6 +21,22 @@
     </div>
   </section>
 
+  <!-- 材质：仅非承重墙可改（玻璃只是墙面材质的一种，2D / 3D 都按玻璃墙渲染） -->
+  <section v-if="canSetMat">
+    <h3>{{ tr('材质', 'Material') }}</h3>
+    <div class="mats">
+      <button v-for="m in WALL_MATS" :key="m.id" class="mat" :class="{on: matId === m.id}"
+        :data-wall-mat="m.id" @click="pickMat(m.id)">
+        <i :style="{ background: m.fill }"></i>
+        <span>{{ tr(m.name, m.en) }}</span>
+      </button>
+    </div>
+    <div class="muted" style="font-size:12px">
+      {{ tr('玻璃材质按玻璃隔断建模（铝框 + 透明玻璃），门窗洞口上方同样补玻璃；其它材质只改变墙面色泽。',
+            'Glass is modelled as a glazed partition (aluminium frame + clear glass) and openings above it get glass too; other materials only change the surface finish.') }}
+    </div>
+  </section>
+
   <section class="muted" style="font-size:12px">
     {{ tr('宽 = 沿墙方向的长度，深 = 墙厚。承重墙与外墙不可删除。',
           'Width = length along the wall, depth = wall thickness. Bearing and exterior walls cannot be removed.') }}
@@ -31,6 +47,7 @@
 import { computed } from 'vue';
 import { usePlanStore, useUiStore } from '@/stores/index.js';
 import { WALLS } from '@/core/model/plan.js';
+import { WALL_MATS, DEFAULT_WALL_MAT } from '@/core/library/wallMats.js';
 import { tr } from '@/i18n.js';
 
 const plan = usePlanStore();
@@ -38,7 +55,7 @@ const uiStore = useUiStore();
 const {
   state, commit, snap,
   elemSize, elemName, setElemSize, deleteElem, reverseDoor,
-  convertWallTo, convertWallFromBearing, isOuterWall
+  convertWallTo, convertWallFromBearing, isOuterWall, setWallMat
 } = plan;
 const { select, showToast } = uiStore;
 
@@ -70,6 +87,25 @@ const canConvertDown = computed(() => wallType.value === 'b');
 const downLabel = computed(() => props.kind === 'wall' && isOuterWall(props.i)
   ? tr('转为外墙', 'Make exterior')
   : tr('转为非承重墙', 'Make partition'));
+
+/* ---------- 材质（仅非承重墙；玻璃 = 非承重墙的一种材质） ---------- */
+const canSetMat = computed(() => props.kind === 'wall' && ['n', 'g'].includes(wallType.value));
+const matId = computed(() => {
+  if (props.kind !== 'wall') return '';
+  const set = state.wallMats?.['w' + props.i];
+  if (set) return set;
+  return wallType.value === 'g' ? 'glass' : DEFAULT_WALL_MAT;   // 旧存档的 'g' 玻璃墙面等价于玻璃材质
+});
+function pickMat(id){
+  if (!canSetMat.value || id === matId.value) return;
+  if (wallType.value === 'g'){
+    // 旧的玻璃墙类型：先转成普通非承重墙（下标会变），再按材质渲染
+    const j = convertWallTo(props.i, 'n');
+    setWallMat(j, id);
+    return select({ kind: 'wall', i: j });
+  }
+  setWallMat(props.i, id);
+}
 
 /* 尺寸：改完可能因为「转成用户元素」而改变下标，需要同步选中项 */
 function setNum(key, e){

@@ -414,7 +414,7 @@ const loftLevelData = () => ({ L2: {
   demolished: [],
   measures: [],
   // 用户可在夹层自行加墙；户型自带的夹层隔断在 LOFT_L2_GEO 里
-  walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {},
+  walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {}, wallMats: {},
   regions: [
     { id: 'l2bath', name: '卫生间', mat: 'antislip', poly: [[0, 0], [2400, 0], [2400, 2000], [0, 2000]] },
     { id: 'l2bed',  name: '卧室',   mat: 'wood',     poly: [[4720, 0], [7000, 0], [7000, 3400], [4720, 3400]] },
@@ -712,7 +712,7 @@ const villaFloorData = (furniture, rooms, seed) => ({
   furniture,
   rooms: villaRoomMeta(rooms, { porch: { name: '入户走廊', mat: 'tile800', light: 'round' } }),
   demolished: [], measures: [],
-  walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {},
+  walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {}, wallMats: {},
   // 户外平台：楼板由区域组成；梯段洞口由 store 按下一层上行楼梯自动开洞
   regions: [entryHall(1400, 11190, 6900, 13390)],
   deletedRooms: [],
@@ -1283,7 +1283,7 @@ const gardenB1Data = () => {
       furniture: gardenB1Furniture(),
       rooms,
       demolished: [], measures: [],
-      walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {},
+      walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {}, wallMats: {},
       regions: [],
       deletedRooms: [],
       regionSeed: 'garden@-1'
@@ -1300,7 +1300,7 @@ const gardenL2Data = () => {
       furniture: gardenL2Furniture(),
       rooms,
       demolished: [], measures: [],
-      walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {},
+      walls: [], wins: [], doors: [], slides: [], bays: [], elemNames: {}, wallMats: {},
       regions: [],
       deletedRooms: [],
       regionSeed: 'garden@2'
@@ -1310,6 +1310,162 @@ const gardenL2Data = () => {
 
 /* 各层家具数据合并（负一层 + 二层） */
 const gardenLevelData = () => Object.assign(gardenB1Data(), gardenL2Data());
+
+/* ============================================================================
+ *  商场样板（3 层 · 单层约 3744 m²）
+ *
+ *  · 内部净尺寸 78000 × 48000，外墙 300、内隔墙 200（全部正交，暂不支持斜墙）；
+ *  · 南北两条商铺带（各 4 + 4 间 + 中部 1 间主力店），中间 8m 宽中央通道；
+ *  · 中部 x 32000~46000 / y 12000~32000 为通高中庭，二三层用「挑空」材质；
+ *  · 层高：一层 5.5m、二 / 三层 5.0m —— 3D 剖切请用「层高」档或 4.5m。
+ * ========================================================================== */
+const MALL_W = 78000, MALL_D = 48000;
+
+/** 商铺带：把 [x0,x1] 等宽切成 n 间，隔墙 200 居中；返回墙体与房间（编号可指定起始值） */
+function mallShops(x0, x1, y0, y1, n, pfx, nameZh, no0 = 1){
+  const walls = [], rooms = [], step = (x1 - x0) / n, mids = [];
+  for (let i = 1; i < n; i++){
+    const m = Math.round(x0 + step*i);
+    mids.push(m);
+    walls.push([m - 100, y0, m + 100, y1, 'n']);
+  }
+  for (let i = 0; i < n; i++){
+    const a = i === 0 ? x0 : mids[i - 1] + 100;
+    const b = i === n - 1 ? x1 : mids[i] - 100;
+    rooms.push({
+      id: pfx + (no0 + i), name: `${nameZh} ${no0 + i}`, mat: 'tile800',
+      at: [Math.round((a + b)/2), Math.round((y0 + y1)/2)],
+      poly: RECT(a, y0, b, y1)
+    });
+  }
+  return { walls, rooms };
+}
+
+const mallNW = mallShops(0, 32000, 0, 18000, 4, 'nw', '北商铺', 1);
+const mallNE = mallShops(46000, MALL_W, 0, 18000, 4, 'ne', '北商铺', 5);
+const mallSW = mallShops(0, 32000, 26000, MALL_D, 4, 'sw', '南商铺', 1);
+const mallSE = mallShops(46000, MALL_W, 26000, MALL_D, 4, 'se', '南商铺', 5);
+
+const MALL_GEO = {
+  walls: [
+    /* ---- 外围墙（300，外墙 e）：北 / 南两段留出窗与门洞 ---- */
+    [-300, -300, 6000, 0, 'e'], [14000, -300, 16000, 0, 'e'], [18000, -300, 30000, 0, 'e'],
+    [48000, -300, 62000, 0, 'e'], [70000, -300, MALL_W + 300, 0, 'e'],
+    [-300, MALL_D, 8000, MALL_D + 300, 'e'], [16000, MALL_D, 36000, MALL_D + 300, 'e'],
+    [38000, MALL_D, 60000, MALL_D + 300, 'e'], [68000, MALL_D, MALL_W + 300, MALL_D + 300, 'e'],
+    [-300, 0, 0, MALL_D, 'e'], [MALL_W, 0, MALL_W + 300, MALL_D, 'e'],
+
+    /* ---- 中央通道两侧（商铺内立面）：两端延伸到中庭侧墙，接缝处不留小豁口 ---- */
+    [0, 18000, 32200, 18200, 'n'], [45800, 18000, MALL_W, 18200, 'n'],
+    [0, 25800, 32200, 26000, 'n'], [45800, 25800, MALL_W, 26000, 'n'],
+
+    /* ---- 中庭：南北封墙，东西两段只封商铺外侧（中间开口通向通道） ---- */
+    [32000, 12000, 46000, 12200, 'n'], [32000, 31800, 46000, 32000, 'n'],
+    [32000, 12000, 32200, 18000, 'n'], [45800, 12000, 46000, 18000, 'n'],
+    [32000, 26000, 32200, 32000, 'n'], [45800, 26000, 46000, 32000, 'n'],
+
+    /* ---- 中部主力店两侧 ---- */
+    [32000, 0, 32200, 12000, 'n'], [45800, 0, 46000, 12000, 'n'],
+    [32000, 32000, 32200, MALL_D, 'n'], [45800, 32000, 46000, MALL_D, 'n'],
+
+    /* ---- 南北商铺带的分间墙 ---- */
+    ...mallNW.walls, ...mallNE.walls, ...mallSW.walls, ...mallSE.walls
+  ],
+  // 采光带 / 店面窗（外墙洞口）
+  wins: [
+    [6000, -300, 14000, 0], [30000, -300, 48000, 0], [62000, -300, 70000, 0],
+    [8000, MALL_D, 16000, MALL_D + 300], [60000, MALL_D, 68000, MALL_D + 300]
+  ],
+  doors: [
+    // 南侧主入口（对外，2000 宽）
+    { name: '入户门', rect: [36000, MALL_D, 38000, MALL_D + 300],
+      h: [36000, MALL_D], c: [1, 0], o: [0, -1], len: 2000, entry: true },
+    // 北侧次入口
+    { name: '入户门', rect: [16000, -300, 18000, 0],
+      h: [18000, 0], c: [-1, 0], o: [0, 1], len: 2000 }
+  ],
+  slides: [],
+  lintels: [],
+  rooms: [
+    // 通道与中庭之间没有墙（开口相连），楼板各自铺到 32200 / 45800 才不会有缝
+    { id: 'corridor_w', name: '中央通道', mat: 'marble', at: [16000, 22000],
+      poly: RECT(0, 18200, 32200, 25800) },
+    { id: 'corridor_e', name: '中央通道', mat: 'marble', at: [62000, 22000],
+      poly: RECT(45800, 18200, MALL_W, 25800) },
+    { id: 'atrium', name: '中庭', mat: 'marble', at: [39000, 22000],
+      poly: RECT(32200, 12200, 45800, 31800) },
+    { id: 'nm', name: '主力店 1', mat: 'tile800', at: [39000, 6000],
+      poly: RECT(32200, 0, 45800, 12000) },
+    { id: 'sm', name: '主力店 2', mat: 'tile800', at: [39000, 40000],
+      poly: RECT(32200, 32000, 45800, MALL_D) },
+    ...mallNW.rooms, ...mallNE.rooms, ...mallSW.rooms, ...mallSE.rooms
+  ],
+  // 商场没有户外区域（卸货 / 广场可后续用「房间区域」自行拉出来）
+  regions: [],
+  bounds: { x: -4000, y: -4000, w: MALL_W + 8000, h: MALL_D + 8000 }
+};
+
+/* 商场初始道具：中庭扶梯 / 电梯、通道长椅与导视、商铺货架与收银台 */
+function mallFurniture(){
+  return [
+    F('escalator', '电梯（扶梯）', 37000, 21800, 1100, 3600, 90),
+    F('escalator', '电梯（扶梯）', 41200, 21800, 1100, 3600, 270),
+    F('elevator', '电梯', 30000, 22000, 1600, 1500),
+    F('bench', '长椅', 16000, 20200, 1800, 500),
+    F('bench', '长椅', 16000, 23800, 1800, 500, 180),
+    F('bench', '长椅', 62000, 20200, 1800, 500),
+    F('bench', '长椅', 62000, 23800, 1800, 500, 180),
+    F('bin', '垃圾箱', 24000, 21200, 400, 400),
+    F('bin', '垃圾箱', 54000, 22800, 400, 400),
+    F('signpost', '导视立牌', 30000, 19500, 900, 200),
+    F('signpost', '导视立牌', 48000, 24500, 900, 200),
+    F('plant', '绿植', 33000, 13200, 500, 500),
+    F('plant', '绿植', 45000, 13200, 500, 500),
+    F('plant', '绿植', 33000, 30800, 500, 500),
+    F('plant', '绿植', 45000, 30800, 500, 500),
+    F('cashier', '收银台', 4000, 1500, 2200, 700),
+    F('shelf', '货架', 2000, 9000, 1800, 600, 90),
+    F('shelf', '货架', 5000, 9000, 1800, 600, 90),
+    F('cashier', '收银台', 74000, 4500, 2200, 700),
+    F('shelf', '货架', 72000, 12000, 1800, 600, 90)
+  ];
+}
+
+/* 二 / 三层：扶梯 / 电梯保留，中庭改为挑空（无楼板、无顶灯） */
+function mallUpperFurniture(){
+  return [
+    F('escalator', '电梯（扶梯）', 37000, 21800, 1100, 3600, 90),
+    F('escalator', '电梯（扶梯）', 41200, 21800, 1100, 3600, 270),
+    F('elevator', '电梯', 30000, 22000, 1600, 1500),
+    F('bench', '长椅', 16000, 20200, 1800, 500),
+    F('bench', '长椅', 62000, 23800, 1800, 500, 180),
+    F('bin', '垃圾箱', 24000, 21200, 400, 400),
+    F('plant', '绿植', 33000, 13200, 500, 500),
+    F('plant', '绿植', 45000, 30800, 500, 500)
+  ];
+}
+
+const mallLevels = () => ([
+  { id: 'L1', no: 1, name: '一层', kind: 'floor', elev: 0,     clearH: 5500 },
+  { id: 'L2', no: 2, name: '二层', kind: 'floor', elev: 5500,  clearH: 5000 },
+  { id: 'L3', no: 3, name: '三层', kind: 'floor', elev: 10500, clearH: 5000 }
+]);
+
+/** 楼层房间表：把静态房间名 / 材质抄成 levelData 需要的形状 */
+const mallRoomMeta = over => {
+  const out = {};
+  for (const r of MALL_GEO.rooms) out[r.id] = { name: r.name, mat: r.mat, light: 'round' };
+  return Object.assign(out, over);
+};
+
+const mallUpperData = seed => ({
+  furniture: mallUpperFurniture(),
+  rooms: mallRoomMeta({ atrium: { name: '中庭', mat: 'void', light: 'none' } }),
+  demolished: [], measures: [], walls: [], wins: [], doors: [], slides: [], bays: [],
+  regions: [], deletedRooms: [], regionSeed: seed, elemNames: {}, wallMats: {}
+});
+
+const mallLevelData = () => ({ L2: mallUpperData('mall@2'), L3: mallUpperData('mall@3') });
 
 /* ---------- 户型注册表 ---------- */
 const PLANS = {
@@ -1394,6 +1550,17 @@ const PLANS = {
     area: 300,                             // 地上两层约 300 m²（单层 149.94 m²，不含地下车库）
     geoVersion: 3                          // v3：新增负一层地下车库（旧存档需补层 / 刷新层高）
   },
+  'mall': {
+    zh: '商场样板(beta)',
+    en: 'Mall Sample',
+    geo: MALL_GEO,
+    furniture: mallFurniture,
+    levels: mallLevels(),            // 一层 5.5m + 二层 / 三层各 5.0m
+    levelData: mallLevelData,
+    hasDims: false,
+    area: 3744,                      // 单层套内约 3744 m²（78 × 48）
+    geoVersion: 1
+  },
   'custom': {
     zh: '自定义户型',
     en: 'Custom layout',
@@ -1407,30 +1574,67 @@ const PLANS = {
 
 export const DEFAULT_PLAN = '3b2b';
 
+/* ---------- 运行时户型 ----------
+ * 「导入户型图」识别出来的几何不属于内置样板，运行时注册到这张表里：
+ *   · 与内置户型走完全相同的 makePlan() / setGeometry() 通路，
+ *     于是 2D、3D、面积统计、房间列表、编辑增量全部立即可用；
+ *   · 几何同时存进方案的 state.customGeo（localStorage），刷新后据此重建，
+ *     不会随页面关闭丢失。图片本身不入存档。 */
+const RUNTIME = new Map();
+
+const polyArea = poly => Math.abs(poly.reduce((a, p, i) => {
+  const r = poly[(i + 1) % poly.length];
+  return a + p[0] * r[1] - r[0] * p[1];
+}, 0)) / 2 / 1e6;
+
+/**
+ * 注册（或覆盖）一个运行时户型。
+ * @param {string} id  形如 'imported-xxxx'
+ * @param {object} geo { walls, wins, doors, slides, lintels, rooms, regions, bounds }
+ * @param {string} [name]
+ */
+export function registerPlan(id, geo, name = '导入户型'){
+  RUNTIME.set(id, {
+    zh: name,
+    en: name,
+    geo,
+    furniture: () => [],
+    hasDims: false,
+    geoVersion: 1,
+    area: Math.round((geo.regions || []).reduce((a, r) => a + polyArea(r.poly || []), 0))
+  });
+  return id;
+}
+
+/** 是否是运行时注册的户型（刷新后需要先从 customGeo 重新注册） */
+export const isRuntimePlan = id => RUNTIME.has(id);
+
+const planOf = id => RUNTIME.get(id) || PLANS[id] || PLANS[DEFAULT_PLAN];
+
 /* 本地化户型名（lang: 'zh' | 'en'） */
 export function planName(id, lang = 'zh'){
-  const p = PLANS[id] || PLANS[DEFAULT_PLAN];
-  return lang === 'en' ? p.en : p.zh;
+  const p = planOf(id);
+  return lang === 'en' ? (p.en || p.zh) : (p.zh || p.en);
 }
 
 /* 是否带静态尺寸标注（尺寸链只按默认户型几何绘制，自定义户型无） */
 export function planHasDims(id){
-  return (PLANS[id] || PLANS[DEFAULT_PLAN]).hasDims !== false;
+  return planOf(id).hasDims !== false;
 }
 
 /* 内置户型的几何版本：几何有调整时 +1，用于丢弃与之不匹配的旧拆改增量 */
 export function planGeoVersion(id){
-  return (PLANS[id] || PLANS[DEFAULT_PLAN]).geoVersion || 1;
+  return planOf(id).geoVersion || 1;
 }
 
 /* 户型标称面积（m²）：各户型在 PLANS 里显式标注，用于弹窗展示 */
 export function planArea(id){
-  return (PLANS[id] || PLANS[DEFAULT_PLAN]).area || 0;
+  return planOf(id).area || 0;
 }
 
 /* 生成一份可使用的户型数据（深拷贝 + 新家具 id） */
 export function makePlan(id = DEFAULT_PLAN){
-  const p = PLANS[id] || PLANS[DEFAULT_PLAN];
+  const p = planOf(id);
   const g = p.geo;
   const out = {
     id,

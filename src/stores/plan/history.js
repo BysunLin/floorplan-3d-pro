@@ -67,6 +67,7 @@ export function createHistory(ctx){
     state.deletedRooms = next.deletedRooms || [];
     state.regionSeed = next.regionSeed || '';
     state.elemNames = next.elemNames || {};
+    state.wallMats = next.wallMats || {};
     state.planId = next.planId || state.planId;
     state.geoVersion = next.geoVersion || planGeoVersion(state.planId);
     // 楼层（Phase 1）：撤销 / 重做同样要还原楼层结构与当前楼层
@@ -77,6 +78,8 @@ export function createHistory(ctx){
       ? next.activeLevel
       : state.levels[0].id;
     state.levelData = next.levelData || {};
+    // 导入户型图的几何随快照一起还原（否则撤销后 planId 回去了、几何还是新的）
+    if (next.customGeo) state.customGeo = next.customGeo;
     syncUserGeom();
     lastClimbSig = climbSig();
     validateSel();
@@ -106,5 +109,12 @@ export function createHistory(ctx){
     uiStore.dropElemSel();
   }
 
-  return { canRedo, canUndo, climbSig, commit, mutate, redo, restore, snap, undo, undoStack };
+  /** 清空撤销 / 重做栈：换了一整套几何（如导入户型图）后，旧快照已经没有意义，
+   *  继续保留会让撤销把旧户型的墙体增量套到新几何上 */
+  function clearHistory(){
+    undoStack.length = 0;
+    redoStack.length = 0;
+  }
+
+  return { canRedo, canUndo, clearHistory, climbSig, commit, mutate, redo, restore, snap, undo, undoStack };
 }

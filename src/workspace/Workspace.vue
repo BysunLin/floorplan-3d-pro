@@ -1,6 +1,7 @@
 <template>
   <!-- 工作区：铺满整个屏幕，2D 平面图与 3D 场景都在这里叠放 -->
-  <main id="stage" class="workspace">
+  <!-- 右键：禁用浏览器原生菜单，改由 2D 交互打开应用自己的右键菜单 -->
+  <main id="stage" class="workspace" @contextmenu.prevent>
     <PlanCanvas/>
     <View3DHost/>
   </main>
