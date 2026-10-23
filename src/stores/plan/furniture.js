@@ -1,8 +1,11 @@
-import { ROOMS, WALLS, WINS, DOORS, SLIDES, aabb, snapRectsOf, norm } from '@/core/model/plan.js';
-import { uid, F, isClimbType, isFloorType } from '@/core/library/index.js';
+import { ROOMS, WALLS, WINS, DOORS, SLIDES, aabb, bbox, snapRectsOf, norm } from '@/core/model/plan.js';
+import { uid, F, isClimbType, isFloorType, isSandboxType } from '@/core/library/index.js';
+import { garageLayout, parkingInPolygon, aisleSpansInPolygon, columnsInPolygon } from '@/core/garage/layout.js';
+import { polyArea, pointInShape } from '@/core/geometry/region.js';
 import { makePlan } from '@/core/plans/index.js';
 import { tr } from '@/i18n.js';
 import { snapRoomEdge, snapLenStep } from '@/core/geometry/wallMath.js';
+import { wallOverlapAt, swingOverlap, checkPlacement, pushOutside } from '@/core/geometry/collide.js';
 
 /** 由 stores/plan/index.js 组装：只依赖共享上下文 ctx，不直接持有全局单例 */
 export function createFurniture(ctx){
@@ -47,21 +50,13 @@ export function createFurniture(ctx){
     if (ui.sel?.kind === 'room' && !ROOMS.some(r => r.id === ui.sel.id)) ui.sel = null;
   }
   /* ======================= 家具增删改 ======================= */
-  /** 新放下的家具若压在墙 / 窗上，沿穿透较浅的方向推出来，刚好贴墙 */
+  /** 新放下的家具若压在墙 / 窗上，沿穿透较浅的方向推出来，刚好贴墙。
+   *  沙盘构件（楼栋 / 地库模块 / 广场）是场地级体量，允许压在轴线上，不参与推出。 */
   function pushOut(f){
-    for (let n = 0; n < 4; n++){
-      let moved = false;
-      for (const r of snapRectsOf(state)){
-        const { hw, hh } = aabb(f);
-        const ox = Math.min(f.cx + hw, r[2]) - Math.max(f.cx - hw, r[0]);
-        const oy = Math.min(f.cy + hh, r[3]) - Math.max(f.cy - hh, r[1]);
-        if (ox <= 0 || oy <= 0) continue;
-        if (ox < oy) f.cx = f.cx < (r[0] + r[2])/2 ? r[0] - hw : r[2] + hw;
-        else         f.cy = f.cy < (r[1] + r[3])/2 ? r[1] - hh : r[3] + hh;
-        moved = true;
-      }
-      if (!moved) return;
-    }
+    if (isSandboxType(f.type)) return;
+    const p = pushOutside(f, snapRectsOf(state));
+    f.cx = p.cx;
+    f.cy = p.cy;
   }
 
   /* ---------- loft 户型：楼梯元素保护 ---------- */
@@ -86,11 +81,74 @@ export function createFurniture(ctx){
     if (def) state.furniture.push({ ...def, id: uid() });
   }
 
+  /**
+   * 按房间 / 区域外轮廓自动铺一块地库模块：
+   * 长边作为车位排布方向，必要时整体旋转 90°，模块精确填满外接矩形。
+   * 返回 { ok, reason?, count? }，失败原因由调用方提示。
+   */
+  function autoGarage(roomId){
+    const r = ROOMS.find(x => x.id === roomId);
+    if (!r) return { ok: false, reason: 'room' };
+    const b = bbox(r.poly);
+    let w = b[2] - b[0], d = b[3] - b[1], rot = 0;
+    if (d > w){ const t = w; w = d; d = t; rot = 90; }
+    if (w < 14000 || d < 14000) return { ok: false, reason: 'small' };
+    const f = F('garagemodule', '地库标准模块',
+      Math.round((b[0] + b[2])/2/10)*10, Math.round((b[1] + b[3])/2/10)*10,
+      Math.round(w/10)*10, Math.round(d/10)*10, rot, '#b9b6b0');
+    const count = garageLayout(f.w, f.d).total;
+    ui.sel = { kind: 'furn', id: f.id };
+    mutate(() => { state.furniture.push(f); });
+    uiStore.showToast(tr(`已按区域铺排地库模块，共 ${count} 个车位`,
+      `Garage module fitted — ${count} stalls`));
+    return { ok: true, count };
+  }
+
+  /**
+   * 自动排车位（智能选择）：
+   *   · 轮廓接近矩形 → 铺一块地库模块（带通道 / 柱网 / 防火分区）
+   *   · 异形轮廓 / 带洞 → 逐位生成车位，只保留四角都在轮廓内的车位
+   */
+  function autoParking(roomId){
+    const r = ROOMS.find(x => x.id === roomId);
+    if (!r) return { ok: false, reason: 'room' };
+    const b = bbox(r.poly);
+    const bw = b[2] - b[0], bd = b[3] - b[1];
+    if (bw < 14000 || bd < 14000) return { ok: false, reason: 'small' };
+    const holes = r.holes || [];
+    const fill = bw*bd > 0 ? Math.abs(polyArea(r.poly))/(bw*bd) : 0;
+    const cornersIn = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]]
+      .every(([x, y]) => pointInShape(x, y, { poly: r.poly, holes }));
+    if (!holes.length && fill >= .93 && cornersIn) return { ...autoGarage(roomId), mode: 'module' };
+
+    const cx = (b[0] + b[2])/2, cy = (b[1] + b[3])/2;
+    const W = Math.max(bw, bd), D = Math.min(bw, bd), rot = bd > bw ? 90 : 0;
+    const { stalls } = parkingInPolygon({ w: W, d: D, poly: r.poly, holes, cx, cy, rot });
+    if (!stalls.length) return { ok: false, reason: 'empty' };
+    const geo = { w: W, d: D, poly: r.poly, holes, cx, cy, rot };
+    const lane = aisleSpansInPolygon(geo).map(s => F('lane', '车道线',
+      Math.round(s.cx/10)*10, Math.round(s.cy/10)*10,
+      Math.round(s.w/10)*10, 150, s.rot, '#f2f4f5'));
+    const cols = columnsInPolygon(geo).map(c => F('garagecol', '地库柱',
+      Math.round(c.cx/10)*10, Math.round(c.cy/10)*10,
+      Math.round(c.w/10)*10, Math.round(c.d/10)*10, c.rot, '#9aa3a8'));
+    const items = stalls.slice(0, 400).map(s => F('parking', '停车位',
+      Math.round(s.cx/10)*10, Math.round(s.cy/10)*10,
+      Math.round(s.w/10)*10, Math.round(s.d/10)*10, s.rot, '#8d949c'));
+    ui.sel = null;
+    mutate(() => { state.furniture.push(...lane, ...items, ...cols); });
+    uiStore.showToast(tr(`异形区域已逐位排布：${items.length} 个车位、${cols.length} 根柱`,
+      `Irregular area — ${items.length} stalls, ${cols.length} columns`));
+    return { ok: true, count: items.length, mode: 'stalls' };
+  }
+
   function addItem(it, x, y){
     const [type, name, w, d, color] = it;
     const f = F(type, name, Math.round(x/10)*10, Math.round(y/10)*10, w, d, 0, color);
-    [f.cx, f.cy] = snapMove(f, f.cx, f.cy);   // 新摆放的家具同样吸附墙 / 其它家具的边线
-    pushOut(f);
+    if (!isSandboxType(type)){
+      [f.cx, f.cy] = snapMove(f, f.cx, f.cy);   // 新摆放的家具同样吸附墙 / 其它家具的边线
+      pushOut(f);
+    }
     ui.sel = { kind: 'furn', id: f.id };
     mutate(() => { type === 'rug' ? state.furniture.unshift(f) : state.furniture.push(f); });
     uiStore.showToast(tr(`已添加「${name}」${w}×${d}`, `Added "${name}" ${w}×${d}`));
@@ -198,51 +256,30 @@ export function createFurniture(ctx){
     return out;
   }
 
-  /** 家具当前落点是否压到墙体 / 门窗（贴边不算：留 2mm 容差） */
+  /* 空间校验统一走 core/geometry/collide.js（2D / 3D / MCP 同一份判定） */
+  const goneDoor = key => state.demolished.includes(key);
+
+  /** 家具放在 (cx, cy) 是否压到墙体 / 门窗（沙盘构件豁免） */
   function wallOverlap(f, cx, cy){
-    const { hw, hh } = aabb(f);
-    const E = 2;
-    return snapRectsOf(state).some(r =>
-      cx - hw < r[2] - E && cx + hw > r[0] + E &&
-      cy - hh < r[3] - E && cy + hh > r[1] + E);
+    if (isSandboxType(f.type)) return false;
+    return wallOverlapAt(f, cx, cy, snapRectsOf(state));
   }
 
-  /** 点是否落在门扇开启的 90° 扇形内（c = 关门方向，o = 开门方向，L = 门宽） */
-  function inSwing(px, py, h, c, o, L){
-    const dx = px - h[0], dy = py - h[1];
-    if (dx*dx + dy*dy > L*L) return false;
-    return (dx*c[0] + dy*c[1]) >= 0 && (dx*o[0] + dy*o[1]) >= 0;
-  }
-
-  /** 门扇的开启扇形（双开门两扇对开） */
-  function doorLeaves(d){
-    if (!d.dbl) return [[d.h, d.c, d.len]];
-    const [rx0, ry0, rx1, ry1] = d.rect;
-    const [hx, hy] = d.h;
-    const hz = (rx1 - rx0) >= (ry1 - ry0);
-    const h2 = hz
-      ? [Math.abs(hx - rx0) <= Math.abs(hx - rx1) ? rx1 : rx0, hy]
-      : [hx, Math.abs(hy - ry0) <= Math.abs(hy - ry1) ? ry1 : ry0];
-    const L = Math.max(rx1 - rx0, ry1 - ry0) / 2;
-    return [[d.h, d.c, L], [h2, [-d.c[0], -d.c[1]], L]];
-  }
-
-  /** 家具落点是否挡住开门（用 5×5 采样覆盖家具的旋转矩形） */
+  /** 家具放在 (cx, cy) 是否挡住开门（沙盘构件豁免） */
   function doorOverlap(f, cx, cy){
-    const a = (f.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
-    const hw = f.w / 2, hd = f.d / 2;
-    const pts = [];
-    for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++){
-      const lx = -hw + f.w * i / 4, ly = -hd + f.d * j / 4;
-      pts.push([cx + lx*ca - ly*sa, cy + lx*sa + ly*ca]);
-    }
-    for (let k = 0; k < DOORS.length; k++){
-      if (state.demolished.includes('nd' + k)) continue;
-      for (const [h, c, L] of doorLeaves(DOORS[k]))
-        for (const [px, py] of pts)
-          if (inSwing(px, py, h, c, DOORS[k].o, L)) return true;
-    }
-    return false;
+    if (isSandboxType(f.type)) return false;
+    return swingOverlap(f, cx, cy, DOORS, goneDoor);
+  }
+
+  /**
+   * 落点校验（供 3D 拖动 / 外部调用）：{ ok, reason: ''|'wall'|'door' }
+   * 与 2D 拖动时的红框判定完全同源。
+   */
+  function placementAt(f, cx = f.cx, cy = f.cy){
+    if (isSandboxType(f.type)) return { ok: true, reason: '' };
+    return checkPlacement(f, cx, cy, {
+      rects: snapRectsOf(state), doors: DOORS, gone: goneDoor
+    });
   }
 
   /**
@@ -313,6 +350,11 @@ export function createFurniture(ctx){
    *  scale = 当前视图的 px/mm（3D 拖动时传入该处的实际比例，保证吸附范围按屏幕 ~10px 恒定） */
   function snapMove(f, cx, cy, scale = view.s){
     let nx = Math.round(cx/GRID)*GRID, ny = Math.round(cy/GRID)*GRID;
+    // 沙盘构件按 10mm 网格自由摆放：不吸墙 / 不吸其它家具，避免大模块被拉偏
+    if (isSandboxType(f.type)){
+      if (ui.dragId){ ui.dragBad = false; ui.dragRect = null; ui.assist = []; ui.guides = []; }
+      return [nx, ny];
+    }
     if (!ui.layers.wallSnap) return [nx, ny];
     const { hw, hh } = aabb(f), tol = 10/Math.max(scale, .001);
 
@@ -482,5 +524,5 @@ export function createFurniture(ctx){
     return { x: Math.round(p.x/10)*10, y: Math.round(p.y/10)*10, kind: null };
   }
 
-  return { GRID, addItem, baseLevelId, bringToFront, clearLayout, copySelection, deleteSel, duplicateSel, ensureLoftStair, furnRects, getF, hasLoft, initLayout, isLastLoftStair, pasteSelection, pushOut, regionSnapRects, rotateSel, sendToBack, setFloorDir, snapEdge, snapMove, snapPoint, snapRegionPoint, validateSel };
+  return { GRID, addItem, baseLevelId, bringToFront, clearLayout, copySelection, deleteSel, duplicateSel, ensureLoftStair, furnRects, getF, hasLoft, initLayout, isLastLoftStair, pasteSelection, placementAt, pushOut, regionSnapRects, rotateSel, sendToBack, setFloorDir, snapEdge, snapMove, snapPoint, snapRegionPoint, validateSel };
 }

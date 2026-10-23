@@ -1,6 +1,9 @@
-import { ROOMS, BOUNDS, setGeometry } from '@/core/model/plan.js';
+import { ROOMS, BOUNDS, WALLS, WINS, DOORS, SLIDES, setGeometry } from '@/core/model/plan.js';
 import { areaOf, bboxOf, overlap, difference, labelPoint } from '@/core/geometry/region.js';
 import { resolveGeometry } from '@/core/model/level.js';
+import { graphFromLegacy } from '@/core/nodes/legacy.js';
+import { WALL_UID, WIN_UID, baseUid, newUid } from '@/core/model/uid.js';
+import { DEFAULT_WALL_MAT } from '@/core/library/wallMats.js';
 import { makePlan } from '@/core/plans/index.js';
 import { tr } from '@/i18n.js';
 import { REGION_NAME, REGION_MAT, REGION_SEED_VER, LEGACY_REGION_IDS } from './constants.js';
@@ -14,6 +17,60 @@ export function createGeometry(ctx){
   const currentLevel = (...a) => ctx.currentLevel(...a);
 
   let areaSig = '';
+
+  /* ---------------- 元素身份（uid） ----------------
+   * 名称 / 墙面材质按 uid 存，下标只用于渲染与命中。
+   * 用户元素在这里补 uid（唯一入口：所有改动最终都会走 syncUserGeom），
+   * 户型自带元素按下标虚拟出稳定的 'bw3' / 'bnw2'。 */
+
+  function ensureElemUids(){
+    for (const w of state.walls || []) if (!w[WALL_UID]) w[WALL_UID] = newUid(state);
+    for (const r of state.wins || []) if (!r[WIN_UID]) r[WIN_UID] = newUid(state);
+    for (const d of state.doors || []) if (!d.uid) d.uid = newUid(state);
+    for (const s of state.slides || []) if (!s.uid) s.uid = newUid(state);
+  }
+
+  const wallUidAt = i => {
+    const w = WALLS[i];
+    if (!w) return '';
+    return w[WALL_UID] || (i < base.walls ? baseUid('w', i) : '');
+  };
+  const winUidAt = i => {
+    const r = WINS[i];
+    if (!r) return '';
+    return r[WIN_UID] || (i < base.wins ? baseUid('nw', i) : '');
+  };
+  const doorUidAt = i => {
+    const d = DOORS[i];
+    if (!d) return '';
+    return d.uid || (i < base.doors ? baseUid('nd', i) : '');
+  };
+  const slideUidAt = i => {
+    const s = SLIDES[i];
+    if (!s) return '';
+    return s.uid || (i < base.slides ? baseUid('ns', i) : '');
+  };
+
+  /** 把旧存档的按下标键（'w3' / 'nw2' …）搬到 uid 键；幂等，每次 sync 都可以跑 */
+  function migrateMap(map, pfx, uidAt){
+    if (!map) return;
+    for (const k of Object.keys(map)){
+      const m = /^([a-z]+)(\d+)$/.exec(k);
+      if (!m || m[1] !== pfx) continue;
+      const uid = uidAt(+m[2]);
+      if (!uid || uid === k) continue;
+      if (map[uid] == null) map[uid] = map[k];
+      delete map[k];
+    }
+  }
+
+  function migrateElemKeys(){
+    migrateMap(state.elemNames, 'w', wallUidAt);
+    migrateMap(state.elemNames, 'nw', winUidAt);
+    migrateMap(state.elemNames, 'nd', doorUidAt);
+    migrateMap(state.elemNames, 'ns', slideUidAt);
+    migrateMap(state.wallMats, 'w', wallUidAt);
+  }
 
   function syncUserGeom(){
     // 飘窗 / 用户绘制的区域：房间名与地面材料存在 state.rooms，旧存档或重载后补齐
@@ -35,6 +92,9 @@ export function createGeometry(ctx){
     base.slides = Math.max(0, resolved.slides.length - (state.slides || []).length);
     // base.rooms 同步成「当前内置房间数」，便于 refreshRoomGeometry 识别内置房间
     base.rooms = resolved.builtinRooms.length;
+    // 元素身份：先给用户新增的墙 / 门窗补 uid，再把旧的按下标键搬到 uid 键
+    ensureElemUids();
+    migrateElemKeys();
     // 房间名 / 地面材料里属于已删除房间（撤销、删区域、换户型后残留）的键一并清掉，
     // 否则自动命名时会把不存在的名字也算作占用
     const ids = new Set(ROOMS.map(r => r.id));
@@ -104,7 +164,61 @@ export function createGeometry(ctx){
     state.regionSeed = key;
   }
 
+  /* ---------------- 节点图（3D / 2D 与后续能力的数据入口） ----------------
+   * 现状：2D 编辑仍写扁平数组；这里把「当前层已解析几何」投影成节点图，
+   * 墙体由 wallRuns(graph) 推导，不再逐段拼盒子 / 逐段画矩形。
+   *
+   * 签名不变时复用同一张图（结构共享）。墙体渲染是每帧都可能走的热路径，
+   * 而拖家具会高频改动 state.furniture —— 所以提供只含墙体 / 洞口的子图，
+   * 避免拖一次家具就把整张图（含房间、家具）重建一遍。 */
+  const levelMeta = () => (ctx.activeLevelMeta && ctx.activeLevelMeta()) || {
+    id: state.activeLevel, name: '', kind: 'floor', elev: 0, clearH: 2800
+  };
+
+  const buildGraph = (withContent) => {
+    const meta = levelMeta();
+    return graphFromLegacy({
+      planId: planId.value,
+      level: {
+        id: meta.id || state.activeLevel, name: meta.name,
+        kind: meta.kind || 'floor', elev: meta.elev || 0, clearH: meta.clearH || 2800
+      },
+      walls: WALLS, wins: WINS, doors: DOORS, slides: SLIDES,
+      rooms: withContent ? ROOMS : [],
+      furniture: withContent ? (state.furniture || []) : [],
+      // 材质按 uid 存；这里按「下标」问 store 要，适配层不需要知道键格式
+      materialOf: i => {
+        const id = ctx.wallMatId ? ctx.wallMatId(i) : '';
+        return id && id !== DEFAULT_WALL_MAT ? id : '';
+      },
+      demolished: state.demolished || []
+    });
+  };
+
+  let graphSig = '', graphCache = null;
+  let wallSig = '', wallCache = null;
+
+  /**
+   * @param {{withContent?: boolean}} [opts]
+   *   withContent=false：只含墙体 / 洞口（2D、3D 建墙的热路径用，拖家具不会触发重建）
+   */
+  function getGraph({ withContent = true } = {}){
+    const base = [planId.value, state.activeLevel, state.demolished, state.wallMats, WALLS, WINS, DOORS, SLIDES];
+    if (!withContent){
+      const sig = JSON.stringify(base);
+      if (sig === wallSig) return wallCache;
+      wallSig = sig;
+      wallCache = buildGraph(false);
+      return wallCache;
+    }
+    const sig = JSON.stringify([...base, ROOMS, state.furniture]);
+    if (sig === graphSig) return graphCache;
+    graphSig = sig;
+    graphCache = buildGraph(true);
+    return graphCache;
+  }
+
   /* 区域的 ROOMS 片段生成已抽到 data/level.js 的 regionRooms()，由 resolveGeometry 统一调用 */
 
-  return { refreshRoomGeometry, regionSeedKey, seedPlanRegions, syncUserGeom };
+  return { refreshRoomGeometry, regionSeedKey, seedPlanRegions, syncUserGeom, getGraph };
 }

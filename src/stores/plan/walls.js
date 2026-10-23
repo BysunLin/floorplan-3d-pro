@@ -1,5 +1,8 @@
 import { computed } from 'vue';
-import { WALLS, WINS, DOORS, SLIDES, ROOMS, clamp, wallRect } from '@/core/model/plan.js';
+import { WALLS, WINS, DOORS, SLIDES, ROOMS, clamp, wallGeom } from '@/core/model/plan.js';
+import { WALL_UID, WIN_UID, WALL_LINE, baseUid } from '@/core/model/uid.js';
+import { wallLine, isSlantedWall, isSlantAB } from '@/core/model/wallLine.js';
+import { segDist, closestOnSeg, quadOf } from '@/core/geometry/seg.js';
 import { WALL_T, WALL_ITEMS, wallItem } from '@/core/library/wallItems.js';
 import { DEFAULT_WALL_MAT, WALL_MAT_IDS } from '@/core/library/wallMats.js';
 import { tr } from '@/i18n.js';
@@ -15,6 +18,37 @@ export function createWalls(ctx){
   const base = geo.base;
   const state = ctx.state;
   const ui = ctx.ui;
+
+  /* ---------- 元素身份：下标 → uid ----------
+   * 下标会随开洞 / 合并 / 转墙型变化，名称与墙面材质因此改按 uid 存。 */
+  function elemUidOf(k, i){
+    if (k === 'wall'){
+      const w = WALLS[i];
+      if (!w) return '';
+      return w[WALL_UID] || (i < base.walls ? baseUid('w', i) : '');
+    }
+    if (k === 'win'){
+      const r = WINS[i];
+      if (!r) return '';
+      return r[WIN_UID] || (i < base.wins ? baseUid('nw', i) : '');
+    }
+    if (k === 'door'){
+      const d = DOORS[i];
+      if (!d) return '';
+      return d.uid || (i < base.doors ? baseUid('nd', i) : '');
+    }
+    if (k === 'slide'){
+      const s = SLIDES[i];
+      if (!s) return '';
+      return s.uid || (i < base.slides ? baseUid('ns', i) : '');
+    }
+    return '';
+  }
+
+  /** 元素在 state.elemNames / state.wallMats 里的键：稳定，不随下标变化 */
+  function elemKey(k, i){
+    return elemUidOf(k, i) || (ELEM_PFX[k] + i);
+  }
   const view = ctx.view;
   const uiStore = ctx.uiStore;
   const syncUserGeom = (...a) => ctx.syncUserGeom(...a);
@@ -32,9 +66,17 @@ export function createWalls(ctx){
     let best = -1, bd = Infinity;
     for (let i = WALLS.length - 1; i >= 0; i--){
       if (state.demolished.includes('w' + i)) continue;
-      const [x0, y0, x1, y1] = WALLS[i];
-      const dx = Math.max(x0 - p.x, 0, p.x - x1), dy = Math.max(y0 - p.y, 0, p.y - y1);
-      const d = Math.hypot(dx, dy);
+      const w = WALLS[i];
+      let d;
+      if (isSlantedWall(w)){
+        // 斜墙的 AABB 明显偏大：必须按中心线距离 + 半厚，否则会「点到空气」
+        const ln = wallLine(w);
+        d = Math.max(0, segDist(p, ln.a, ln.b) - ln.t / 2);
+      } else {
+        const [x0, y0, x1, y1] = w;
+        const dx = Math.max(x0 - p.x, 0, p.x - x1), dy = Math.max(y0 - p.y, 0, p.y - y1);
+        d = Math.hypot(dx, dy);
+      }
       if (d <= t && d < bd){ bd = d; best = i; }
     }
     return best;
@@ -45,7 +87,11 @@ export function createWalls(ctx){
     const tol = 14/view.s;
     let x = Math.round(p.x/10)*10, y = Math.round(p.y/10)*10, bd = tol;
     for (const r of snapRectsOf(state)){
-      for (const [ex, ey] of [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]]){
+      const corners = (r[WALL_LINE] && r[WALL_LINE].a)
+        ? quadOf({ x: r[WALL_LINE].a[0], y: r[WALL_LINE].a[1] },
+                 { x: r[WALL_LINE].b[0], y: r[WALL_LINE].b[1] }, r[WALL_LINE].t || 120)
+        : [[r[0], r[1]], [r[2], r[1]], [r[0], r[3]], [r[2], r[3]]];
+      for (const [ex, ey] of corners){
         const d = Math.hypot(ex - p.x, ey - p.y);
         if (d < bd){ bd = d; x = ex; y = ey; }
       }
@@ -67,6 +113,20 @@ export function createWalls(ctx){
     for (let i = 0; i < WALLS.length; i++){
       if (i === exclude || state.demolished.includes('w' + i)) continue;
       const w = WALLS[i];
+
+      // 斜墙：角接吸到两个端点，T 接吸到中心线投影（半厚已扣掉）
+      if (isSlantedWall(w)){
+        const ln = wallLine(w);
+        for (const e of [ln.a, ln.b]){
+          const d = Math.hypot(e.x - b.x, e.y - b.y);
+          if (d < bd){ bd = d; best = { x: e.x, y: e.y }; }
+        }
+        const c = closestOnSeg(b, ln.a, ln.b);
+        const d = Math.max(0, c.d - ln.t / 2);
+        if (d < bd){ bd = d; best = { x: Math.round(c.x), y: Math.round(c.y) }; }
+        continue;
+      }
+
       const x0 = Math.min(w[0], w[2]), x1 = Math.max(w[0], w[2]);
       const y0 = Math.min(w[1], w[3]), y1 = Math.max(w[1], w[3]);
       // 墙角：吸附到顶点（角接）
@@ -98,7 +158,8 @@ export function createWalls(ctx){
       if (state.demolished.includes('w' + i)) continue;
       const w = WALLS[i];
       if (w[4] !== type) continue;
-      const t = Math.min(Math.abs(w[2] - w[0]), Math.abs(w[3] - w[1]));
+      // 斜墙的 AABB 两边都被放大，不能再取「短边」：厚度只能从中心线负载读
+      const t = wallLine(w).t;
       if (t > 0) cnt[t] = (cnt[t] || 0) + 1;
     }
     let best = 0, n = 0;
@@ -114,10 +175,22 @@ export function createWalls(ctx){
    *      异类 → 绘制区域改为所选类型（其余部分按原类型拆分保留）。
    *  · 无重叠时沿用旧逻辑：与「同向、共线且首尾相接」的同类型墙段合并（延长已有墙）。 */
   function addWall(a, b, type, t){
-    const r = wallRect(a, b, t || projectWallT(type), type);
-    const len = Math.max(r[2] - r[0], r[3] - r[1]);
+    const thick = t || projectWallT(type);
+    const len = Math.round(Math.hypot(b.x - a.x, b.y - a.y));
     if (len < 100) return uiStore.showToast(tr('墙体太短，已忽略', 'Wall is too short — ignored'));
 
+    /* 斜墙：既有「同线重叠 / 同线合并」全部建立在轴对齐矩形上，直接套用会误判
+     * （AABB 相交不代表墙线相交）。P1 阶段先按「独立墙体」落库，
+     * 合并 / 转换 / 覆盖留到后续阶段按中心线重写。 */
+    if (isSlantAB(a, b)){
+      const r = wallGeom(a, b, thick, type);
+      mutate(() => { state.walls.push(r); });
+      syncUserGeom();
+      uiStore.showToast(tr(`已添加斜墙 ${len} mm`, `Added a ${len} mm angled wall`));
+      return;
+    }
+
+    const r = wallGeom(a, b, thick, type);
     const hit = sameLineOverlaps(r, type);
 
     // 在同类墙内绘制（含从墙端向内覆盖）→ 已是对应墙型，无需绘制
@@ -142,10 +215,14 @@ export function createWalls(ctx){
         keep(o1, o.a1);
       }
       const m = wallSpanMerge(r, type);               // 与相邻同类型墙段合并（覆盖全墙时等价于「转换」）
+      // 改成所选类型的这段墙继承原墙身份（名称 / 材质不丢）
+      const inherited = elemUidOf('wall', hit.other[0]?.i ?? m.absorbed[0] ?? -1);
       mutate(() => {
         removeWallsOnly([...hit.other.map(o => o.i), ...m.absorbed]);
         for (const p of pieces) state.walls.push(p);  // 非绘制区域拆分保留
-        state.walls.push([...m.rect, type]);          // 绘制区域改为所选类型
+        const w = [...m.rect, type];                  // 绘制区域改为所选类型
+        if (inherited) w[WALL_UID] = inherited;
+        state.walls.push(w);
       });
       syncUserGeom();
       const nm = (WALL_TXT[type] || WALL_TXT.n)();
@@ -155,8 +232,11 @@ export function createWalls(ctx){
     mutate(() => {
       const m = wallSpanMerge(r, type);
       if (m.absorbed.length){
+        const inherited = elemUidOf('wall', m.absorbed[0]);
         removeWallsOnly(m.absorbed);          // 吸收被延长的旧墙段，并入新墙
-        state.walls.push([...m.rect, type]);
+        const w = [...m.rect, type];
+        if (inherited) w[WALL_UID] = inherited;
+        state.walls.push(w);
       } else {
         state.walls.push(r);
       }
@@ -182,6 +262,16 @@ export function createWalls(ctx){
       const w = WALLS[i];
       const x0 = Math.min(w[0], w[2]), x1 = Math.max(w[0], w[2]);
       const y0 = Math.min(w[1], w[3]), y1 = Math.max(w[1], w[3]);
+
+      if (isSlantedWall(w)){
+        const ln = wallLine(w);
+        const d = Math.max(0, segDist(p, ln.a, ln.b) - ln.t / 2);
+        if (d > tol || d >= bd) continue;
+        bd = d;
+        best = { i, x0, x1, y0, y1, horiz: false, slanted: true, type: w[4], t: ln.t };
+        continue;
+      }
+
       const dx = Math.max(x0 - p.x, 0, p.x - x1), dy = Math.max(y0 - p.y, 0, p.y - y1);
       const d = Math.hypot(dx, dy);
       if (d > tol || d >= bd) continue;
@@ -256,14 +346,98 @@ export function createWalls(ctx){
    * 断点表与动态取舍规则见 wallMath.js 的 snapLenStep（画墙 / 区域绘制共用）。
    */
   function snapWallLength(a, b, tolPx = 12){
-    const horiz = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
-    const d = horiz ? b.x - a.x : b.y - a.y;
-    const L = Math.abs(d);
+    // 沿 a→b 的方向做长度吸附：正交时等价于旧的「只动一个轴」，斜墙时沿真实墙轴缩放
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const L = Math.hypot(dx, dy);
     if (L < 60) return b;
     const best = snapLenStep(L, view.s, tolPx);
     if (best === L) return b;
-    const v = Math.round(d < 0 ? -best : best);
-    return horiz ? { ...b, x: a.x + v } : { ...b, y: a.y + v };
+    const k = best / L;
+    return { ...b, x: Math.round(a.x + dx * k), y: Math.round(a.y + dy * k) };
+  }
+
+  /** 画墙「墙线对齐」的吸附容差（屏幕像素） */
+  const ALIGN_PX = 8;
+
+  /**
+   * 画墙墙线对齐：把新墙在固定轴上的坐标（水平墙的 y / 竖直墙的 x）
+   * 吸附到附近墙体的边线（面）或中线，并给出显示用的虚线辅助线。
+   *
+   * 例：在走廊里画隔墙，墙线自动落到对面墙的内皮 / 中线上；
+   * 画的时候能看到一条从旧墙延伸过来的虚线，不用先画歪再回头量。
+   *
+   * @param {{x:number,y:number}} a 起点
+   * @param {{x:number,y:number}} b 终点（已按 90° 正交）
+   * @param {number} hostIdx 起点所吸附的墙体下标（沿它延长时不做其它对齐）
+   * @returns {{a,b,guides:Array,snapped?:boolean}}
+   */
+  function alignWallDraw(a, b, hostIdx = -1){
+    if (!a || !b) return { a, b, guides: [] };
+    // 斜墙不做墙线对齐：对齐的语义是「把某个轴坐标拉到旧墙边线 / 中线」，
+    // 会直接把任意角度掰回正交。正交墙（angle 吸附已保证严格 0/90）仍照旧走。
+    if (isSlantAB(a, b)) return { a, b, guides: [] };
+    const horiz = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
+
+    // 沿起点所在的墙继续延长：保持共线，避免被别的墙拉歪
+    const host = WALLS[hostIdx];
+    if (host){
+      const hx = Math.abs(host[2] - host[0]), hy = Math.abs(host[3] - host[1]);
+      if ((hx >= hy) === horiz) return { a, b, guides: [] };
+    }
+
+    const tol = ALIGN_PX / view.s;
+    const cur = horiz ? a.y : a.x;
+    let best = null, bd = tol;
+
+    for (let i = 0; i < WALLS.length; i++){
+      if (i === hostIdx || state.demolished.includes('w' + i)) continue;
+      const w = WALLS[i];
+      // 斜墙的 AABB 边线不是墙的边线，不能作为对齐参考
+      if (isSlantedWall(w)) continue;
+      const x0 = Math.min(w[0], w[2]), x1 = Math.max(w[0], w[2]);
+      const y0 = Math.min(w[1], w[3]), y1 = Math.max(w[1], w[3]);
+      const wHoriz = (x1 - x0) >= (y1 - y0);
+
+      /* 参考线：同向墙取两条边 + 中线；垂直墙取两端（用于 T 接对齐） */
+      const lines = [];
+      if (horiz){
+        if (wHoriz){
+          lines.push([y0, x0, x1, false], [y1, x0, x1, false], [(y0 + y1) / 2, x0, x1, true]);
+        } else {
+          lines.push([y0, x0, x1, false], [y1, x0, x1, false]);
+        }
+      } else {
+        if (!wHoriz){
+          lines.push([x0, y0, y1, false], [x1, y0, y1, false], [(x0 + x1) / 2, y0, y1, true]);
+        } else {
+          lines.push([x0, y0, y1, false], [x1, y0, y1, false]);
+        }
+      }
+
+      for (const [at, s0, s1, isCenter] of lines){
+        const d = Math.abs(at - cur);
+        if (d > bd + .01) continue;
+        // 等距时优先「面」：贴墙比对齐中线更常用
+        if (best && Math.abs(d - bd) < .01 && isCenter && !best.isCenter) continue;
+        bd = d;
+        best = { at, s0, s1, isCenter };
+      }
+    }
+
+    if (!best) return { a, b, guides: [] };
+
+    // 起终点直接落到同一条参考线上：既完成吸附，也保证墙仍严格正交
+    const na = horiz ? { ...a, y: best.at } : { ...a, x: best.at };
+    const nb = horiz ? { ...b, y: best.at } : { ...b, x: best.at };
+
+    // 辅助线：从参考墙段一直延伸到新墙两端（视觉上就是「旧墙边缘被延长」）
+    const lo = Math.min(best.s0, horiz ? na.x : na.y, horiz ? nb.x : nb.y);
+    const hi = Math.max(best.s1, horiz ? na.x : na.y, horiz ? nb.x : nb.y);
+    const guides = [horiz
+      ? { x1: lo, y1: best.at, x2: hi, y2: best.at }
+      : { x1: best.at, y1: lo, x2: best.at, y2: hi }];
+
+    return { a: na, b: nb, guides, snapped: true };
   }
 
   /**
@@ -280,6 +454,14 @@ export function createWalls(ctx){
    */
   function resolveWallStart(wall, raw, m, t){
     const g = v => Math.round(v/10)*10;
+
+    // 斜墙作宿主：端面对齐 / 垂直分叉的正交公式不适用，起点直接取中心线上的投影点
+    if (wall?.slanted){
+      const ln = wallLine(WALLS[wall.i]);
+      const c = closestOnSeg(raw, ln.a, ln.b);
+      return { a: { x: g(c.x), y: g(c.y) }, axis: null };
+    }
+
     const { x0, x1, y0, y1 } = wall;
     const mid = wall.horiz ? (y0 + y1)/2 : (x0 + x1)/2;
 
@@ -330,13 +512,20 @@ export function createWalls(ctx){
       : { a: { x: g(nearThick), y: g(ayIn) }, axis: 'h' };
   }
 
-  /** 用若干墙段替换原墙：基础墙标记拆除并追加为「用户墙」；用户墙就地替换。 */
+  /** 用若干墙段替换原墙：基础墙标记拆除并追加为「用户墙」；用户墙就地替换。
+   *  切出来的各段继承原墙的 uid —— 名称 / 材质跟着整面墙走，不会只剩一半。 */
   function replaceWall(wi, pieces){
+    const uid = elemUidOf('wall', wi);
+    const out = pieces.map(p => {
+      const a = p.slice(0, 5);
+      if (uid) a[WALL_UID] = uid;
+      return a;
+    });
     if (wi < base.walls){
       if (!state.demolished.includes('w' + wi)) state.demolished.push('w' + wi);
-      state.walls.push(...pieces);
+      state.walls.push(...out);
     } else {
-      state.walls.splice(wi - base.walls, 1, ...pieces);
+      state.walls.splice(wi - base.walls, 1, ...out);
     }
   }
 
@@ -455,7 +644,7 @@ export function createWalls(ctx){
 
   /** 元素名称：优先用自定义名，否则按类型给默认名 */
   function elemName(k, i){
-    const custom = state.elemNames[ELEM_PFX[k] + i];
+    const custom = state.elemNames[elemKey(k, i)] ?? state.elemNames[ELEM_PFX[k] + i];
     if (custom) return custom;
     if (k === 'wall') return (WALL_TXT[WALLS[i]?.[4]] || WALL_TXT.n)();
     if (k === 'door')  return DOORS[i]?.name || tr('房门', 'Door');
@@ -471,24 +660,15 @@ export function createWalls(ctx){
     });
   }
 
-  /* ---------------- 墙面材质（仅非承重墙）：{'w3':'glass'} ---------------- */
+  /* ---------------- 墙面材质（仅非承重墙）：{'u12':'glass'} ----------------
+   * 键 = 元素 uid（旧存档的 'w3' 仍可读，syncUserGeom 会搬到 uid 键）。 */
 
-  /** 墙体下标 → 材质键：材质按墙下标存，墙段换下标时用 moveWallMat 搬运 */
-  const wallMatKey = i => 'w' + i;
+  const wallMatKey = i => elemKey('wall', i);
 
   /** 某段墙的材质 id（未设置 / 无效 → 默认材质） */
   function wallMatId(i){
-    const id = state.wallMats?.[wallMatKey(i)];
+    const id = state.wallMats?.[wallMatKey(i)] ?? state.wallMats?.['w' + i];
     return WALL_MAT_IDS.includes(id) ? id : DEFAULT_WALL_MAT;
-  }
-
-  /** 材质随墙体换下标（转承重墙 / 改尺寸会把墙换成用户墙，下标会变） */
-  function moveWallMat(from, to){
-    if (from === to || !state.wallMats) return;
-    const k = wallMatKey(from), v = state.wallMats[k];
-    if (!v) return;
-    delete state.wallMats[k];
-    state.wallMats[wallMatKey(to)] = v;
   }
 
   /** 改墙面材质（走撤销栈）；玻璃材质在 2D / 3D 都按玻璃墙渲染 */
@@ -496,6 +676,7 @@ export function createWalls(ctx){
     mutate(() => {
       if (!state.wallMats) state.wallMats = {};
       const k = wallMatKey(i);
+      delete state.wallMats['w' + i];          // 顺手清掉旧存档的按下标键
       if (!id || id === DEFAULT_WALL_MAT) delete state.wallMats[k];
       else state.wallMats[k] = id;
     });
@@ -506,22 +687,40 @@ export function createWalls(ctx){
     if (i >= ELEM_BASE[k]()) return i;
     const id = ELEM_PFX[k] + i;
     if (!state.demolished.includes(id)) state.demolished.push(id);
+    // 副本继承原元素的 uid：名称 / 墙面材质自动跟着走，不需要按下标搬
     if (k === 'wall'){
-      state.walls.push(WALLS[i].slice());
-      const ni = base.walls + state.walls.length - 1;
-      moveWallMat(i, ni);                 // 材质按「墙下标」存，换下标后要跟着搬
-      return ni;
+      const copy = WALLS[i].slice();
+      if (!copy[WALL_UID]) copy[WALL_UID] = baseUid('w', i);
+      state.walls.push(copy);
+      return base.walls + state.walls.length - 1;
     }
-    if (k === 'win'){ state.wins.push(WINS[i].slice()); return base.wins + state.wins.length - 1; }
-    if (k === 'door'){ state.doors.push({ ...DOORS[i], rect: DOORS[i].rect.slice() }); return base.doors + state.doors.length - 1; }
-    if (k === 'slide'){ state.slides.push({ ...SLIDES[i], rect: SLIDES[i].rect.slice() }); return base.slides + state.slides.length - 1; }
+    if (k === 'win'){
+      const copy = WINS[i].slice();
+      if (!copy[WIN_UID]) copy[WIN_UID] = baseUid('nw', i);
+      state.wins.push(copy);
+      return base.wins + state.wins.length - 1;
+    }
+    if (k === 'door'){
+      const src = DOORS[i];
+      state.doors.push({ ...src, rect: src.rect.slice(), uid: src.uid || baseUid('nd', i) });
+      return base.doors + state.doors.length - 1;
+    }
+    if (k === 'slide'){
+      const src = SLIDES[i];
+      state.slides.push({ ...src, rect: src.rect.slice(), uid: src.uid || baseUid('ns', i) });
+      return base.slides + state.slides.length - 1;
+    }
     return i;
   }
 
   /** 写入元素矩形（下标为 WALLS / WINS / … 的绝对下标） */
   function writeElemRect(k, j, nr){
     if (k === 'wall'){ const w = state.walls[j - base.walls]; if (w){ w[0] = nr[0]; w[1] = nr[1]; w[2] = nr[2]; w[3] = nr[3]; } }
-    else if (k === 'win'){ const u = j - base.wins; if (u >= 0 && u < state.wins.length) state.wins[u] = nr; }
+    else if (k === 'win'){
+      const u = j - base.wins;
+      const old = state.wins[u];
+      if (old) state.wins[u] = old[WIN_UID] ? [...nr, old[WIN_UID]] : [...nr];
+    }
     else if (k === 'door'){ const d = state.doors[j - base.doors]; if (d){ d.rect = nr; d.len = Math.max(nr[2] - nr[0], nr[3] - nr[1]); } }
     else if (k === 'slide'){ const s = state.slides[j - base.slides]; if (s) s.rect = nr; }
   }
@@ -750,14 +949,17 @@ export function createWalls(ctx){
     const horiz = (x1 - x0) >= (y1 - y0);
     const t = projectWallT(type), cx = (x0 + x1)/2, cy = (y0 + y1)/2;
     const rect = horiz ? [x0, cy - t/2, x1, cy + t/2] : [cx - t/2, y0, cx + t/2, y1];
+    const uid = elemUidOf('wall', i);                // 身份在改数组前取好
     const m = wallSpanMerge(rect, type);
     let ni = i;
     mutate(() => {
       removeWallsOnly([i, ...m.absorbed]);
-      state.walls.push([...m.rect, type]);
+      const next = [...m.rect, type];
+      if (uid) next[WALL_UID] = uid;
+      state.walls.push(next);
       ni = base.walls + state.walls.length - 1;     // 换成了用户墙，下标会变
-      if (type === 'n') moveWallMat(i, ni);          // 非承重墙保留原墙面材质
-      else if (state.wallMats) delete state.wallMats[wallMatKey(i)];
+      // 非承重墙才可设墙面材质：换成承重 / 外墙时清掉
+      if (type !== 'n' && state.wallMats) delete state.wallMats[uid || wallMatKey(i)];
     });
     syncUserGeom();
     uiStore.showToast(type === 'b'
@@ -799,5 +1001,5 @@ export function createWalls(ctx){
     uiStore.showToast(tr('已删除', 'Deleted'));
   }
 
-  return { ALONG_RATIOS, EDGE_PX, ELEM_BASE, OPEN_BASE, activeWall, addOpening, addWall, convertWallFromBearing, convertWallTo, coveredByWall, deleteElem, elemName, elemRect, elemSize, ensureUserElem, fillOpening, hitWall, isOuterWall, openingFillType, openingPreviewAt, projectWallT, removeOpeningOnly, removeWallsOnly, replaceWall, resolveWallStart, reverseDoor, sameLineOverlaps, setElemName, setElemSize, wallMatId, setWallMat, snapAlongHost, snapAlongWall, snapRatioBetween, snapWallEndpoint, snapWallLength, snapWallPoint, pointInHouse, wallSpanMerge, wallUnderPoint, writeElemRect };
+  return { ALONG_RATIOS, EDGE_PX, ELEM_BASE, OPEN_BASE, activeWall, addOpening, addWall, alignWallDraw, convertWallFromBearing, convertWallTo, coveredByWall, deleteElem, elemKey, elemName, elemRect, elemSize, ensureUserElem, fillOpening, hitWall, isOuterWall, openingFillType, openingPreviewAt, projectWallT, removeOpeningOnly, removeWallsOnly, replaceWall, resolveWallStart, reverseDoor, sameLineOverlaps, setElemName, setElemSize, wallMatId, setWallMat, snapAlongHost, snapAlongWall, snapRatioBetween, snapWallEndpoint, snapWallLength, snapWallPoint, pointInHouse, wallSpanMerge, wallUnderPoint, writeElemRect };
 }

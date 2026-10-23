@@ -22,6 +22,7 @@ import { createWalls } from './walls.js';
 import { createRegions } from './regions.js';
 import { createPlans } from './plans.js';
 import { createImported } from './imported.js';
+import { createSite } from './site.js';
 
 export { ELEM_KINDS } from '@/stores/ui.js';
 export { isOpenableType } from '@/core/geometry/wallMath.js';
@@ -38,7 +39,8 @@ export const usePlanStore = defineStore('plan', () => {
     createWalls(ctx),
     createRegions(ctx),
     createPlans(ctx),
-    createImported(ctx)
+    createImported(ctx),
+    createSite(ctx)
   ];
   for (const g of groups) Object.assign(ctx, g);
 
@@ -50,12 +52,19 @@ export const usePlanStore = defineStore('plan', () => {
     // 状态
     state: ctx.state, planId: ctx.planId, planVersion: ctx.planVersion,
     // 几何
-    syncUserGeom: ctx.syncUserGeom, initGeometry: ctx.initGeometry,
+    syncUserGeom: ctx.syncUserGeom, initGeometry: ctx.initGeometry, getGraph: ctx.getGraph,
     // 户型
     setPlan: ctx.setPlan, applyPlan: ctx.applyPlan, resetPlan: ctx.resetPlan, importPlan: ctx.importPlan,
     applyImportedGeo: ctx.applyImportedGeo,
     // 历史
     clearHistory: ctx.clearHistory,
+    // 场地 / 楼栋 / 道路（多楼栋架构）
+    activeBuilding: ctx.activeBuilding, activeTransform: ctx.activeTransform,
+    siteBuildings: ctx.siteBuildings, siteRoads: ctx.siteRoads,
+    buildingAt: ctx.buildingAt,
+    addBuilding: ctx.addBuilding, setBuildingPos: ctx.setBuildingPos,
+    rotateBuilding: ctx.rotateBuilding, renameBuilding: ctx.renameBuilding,
+    removeBuilding: ctx.removeBuilding, addRoad: ctx.addRoad, removeRoad: ctx.removeRoad,
     // 楼层
     levels, activeLevel,
     switchLevel: ctx.switchLevel, addLevel: ctx.addLevel, addBasement: ctx.addBasement,
@@ -72,18 +81,21 @@ export const usePlanStore = defineStore('plan', () => {
     // 选择 / 校验
     getF: ctx.getF, validateSel: ctx.validateSel,
     // 家具
-    pushOut: ctx.pushOut, addItem: ctx.addItem, rotateSel: ctx.rotateSel, setFloorDir: ctx.setFloorDir,
+    pushOut: ctx.pushOut, placementAt: ctx.placementAt, addItem: ctx.addItem,
+    autoGarage: ctx.autoGarage, autoParking: ctx.autoParking,
+    rotateSel: ctx.rotateSel, setFloorDir: ctx.setFloorDir,
     deleteSel: ctx.deleteSel, duplicateSel: ctx.duplicateSel,
     bringToFront: ctx.bringToFront, sendToBack: ctx.sendToBack,
     clearLayout: ctx.clearLayout, initLayout: ctx.initLayout,
     // 墙面组件 / 墙体
     activeWall: ctx.activeWall, hitWall: ctx.hitWall, snapWallPoint: ctx.snapWallPoint,
+    alignWallDraw: ctx.alignWallDraw,
     snapWallEndpoint: ctx.snapWallEndpoint, projectWallT: ctx.projectWallT,
     addWall: ctx.addWall, wallUnderPoint: ctx.wallUnderPoint, resolveWallStart: ctx.resolveWallStart,
     snapAlongHost: ctx.snapAlongHost, snapWallLength: ctx.snapWallLength,
     pointInHouse: ctx.pointInHouse, addOpening: ctx.addOpening, reverseDoor: ctx.reverseDoor,
     // 元素（拆改）
-    elemRect: ctx.elemRect, elemSize: ctx.elemSize, elemName: ctx.elemName,
+    elemRect: ctx.elemRect, elemSize: ctx.elemSize, elemName: ctx.elemName, elemKey: ctx.elemKey,
     setElemName: ctx.setElemName, setElemSize: ctx.setElemSize,
     wallMatId: ctx.wallMatId, setWallMat: ctx.setWallMat,
     openingPreviewAt: ctx.openingPreviewAt,

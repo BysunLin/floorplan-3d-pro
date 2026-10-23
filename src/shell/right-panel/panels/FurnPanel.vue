@@ -46,8 +46,9 @@
 <script setup>
 import { computed } from 'vue';
 import { usePlanStore, useUiStore } from '@/stores/index.js';
-import { norm } from '@/core/model/plan.js';
+import { WALLS } from '@/core/model/plan.js';
 import { isClimbType } from '@/core/library/index.js';
+import { snapAngle, wallAngles } from '@/core/geometry/angle.js';
 import { tr } from '@/i18n.js';
 
 const plan = usePlanStore();
@@ -75,10 +76,14 @@ function setNum(key, e){
   apply(g => { g[key] = Math.max(50, Math.round(v)); });
 }
 
+/** 角度：失焦 / 回车时吸附（墙体走向优先，其次 15°），与 3D 旋转 gizmo 同一规则 */
 function setRot(e){
   const v = parseFloat(e.target.value);
   if (Number.isNaN(v)) return;
-  apply(g => { g.rot = norm(v); });
+  const deg = snapAngle(v, wallAngles(WALLS));
+  if (deg === (f.value?.rot || 0)){ e.target.value = deg; return; }   // 没变化就不进撤销栈
+  e.target.value = deg;
+  apply(g => { g.rot = deg; });
 }
 
 function onColor(e){ const v = e.target.value; apply(g => { g.color = v; }); }

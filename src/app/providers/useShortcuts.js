@@ -5,6 +5,7 @@ import { usePlanStore, useUiStore, useViewStore } from '@/stores/index.js';
 import { getEngine } from '@/workspace/view3d/registry.js';
 import { toggleView } from '@/app/providers/useViewSwitch.js';
 import { toggleFullscreen } from '@/app/providers/useFullscreen.js';
+import { lodOf, LOD } from '@/core/model/lod.js';
 
 export function installShortcuts(){
   const plan = usePlanStore();
@@ -30,6 +31,27 @@ export function installShortcuts(){
 
     // 3D 下屏蔽只属于 2D 的键
     if (viewIs3D() && ['v', 'm', 'x', 'f', '+', '=', '-'].includes(k)) return;
+
+    /* 总图档：R / Delete / Esc 作用于楼栋与道路，不碰室内元素 */
+    const siteMode = lodOf(viewStore.view.s) === LOD.SITE;
+    if (siteMode){
+      if (k === 'r' && ui.siteSel?.kind === 'building'){
+        plan.rotateBuilding(ui.siteSel.id, e.shiftKey ? -90 : 90);
+        return;
+      }
+      if ((k === 'delete' || k === 'backspace')){
+        e.preventDefault();
+        if (ui.siteSel?.kind === 'building' && plan.removeBuilding(ui.siteSel.id)) ui.siteSel = null;
+        else if (ui.siteSel?.kind === 'road'){ plan.removeRoad(ui.siteSel.id); ui.siteSel = null; }
+        return;
+      }
+      if (k === 'escape'){
+        if (ui.siteRoad) uiStore.cancelSiteRoad();
+        else if (ui.siteSel) ui.siteSel = null;
+        else if (ui.siteTool !== 'select') ui.siteTool = 'select';
+        return;
+      }
+    }
 
     if (k === 'v') uiStore.setTool('select');
     else if (k === 'm') uiStore.setTool('measure');

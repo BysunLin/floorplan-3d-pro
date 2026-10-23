@@ -17,8 +17,8 @@ Multi-floor and loft mezzanines are supported, along with wall materials, 3D qua
 **2D layout**
 - Real plan scales (1:60 / 1:100), all dimensions in mm
 - Zoom goes down to 0.004 px/mm (1px ≈ 250mm): a 1000px-wide viewport shows ~250m at once, so malls, factories and other large plans fit on screen; when zoomed far out, room and furniture labels scale up to stay readable
-- Drag 80+ furniture / appliance items from the library (bedroom, living room, kitchen & dining, bathroom, appliances, study & leisure, partitions, **commercial & public**, floors, outdoor & garage, outdoor & road); custom 3D assets can be added
-- Built-in layouts: flats (4-bed / 3-bed / 2-bed / 1-bed / studio), detached villa (3 floors), garden villa (with garage basement), loft, **mall sample (3 floors)** and an empty custom layout
+- The library is split into **Home / Commercial / Outdoor** tabs (228 items): home (bedroom, living room, kitchen & dining, bathroom, appliances, study & leisure, partitions, floors), commercial (public, dining, retail), outdoor (garage, sports courts, water features, kids, landscape, road), plus real-estate sandbox pieces (18/26/33F towers, garden flats, townhouses, villas, retail podium, kindergarten, community gate, entry plaza, mirror pool, cascade wall, planting and context buildings), a basement garage set (garage module, roof & soil, entrance, stair core, skylight, fan room, fire shutter, accessible/tandem/compact stalls, speed bump, convex mirror, guidance sign) and traffic / landscape primitives (4/6-lane urban roads, intersection, traffic light, bus stop, metro entrance, barrier, bike and EV shelters, fire lane, turnaround, hidden fire lane, accessible ramp, garden path, stepping stones, boardwalk, dry fountain, stream, waterside deck, revetment, feature wall, sculpture, fence, signage, lawn and garden lamps, zelkova, tallow, palm, bamboo, flower beds, aquatic plants, tree grid, street trees, land parcel line), plus city context (slab blocks, towers, school, hospital, retail complex, city grid, river, lake, park, hill, metro line & station, power line, substation), marketing (sales center, model house, viewing walkway, hoarding, banners, lightbox), extra sports (half-court, gateball, skate park, loop trail, pet park, senior area), basement extras (civil defense, storage, equipment rooms) and construction (tower crane, foundation pit, construction road, material yard); custom 3D assets can be added
+- Built-in layouts: flats (4-bed / 3-bed / 2-bed / 1-bed / studio), detached villa (3 floors), garden villa (with garage basement), loft, **mall sample (3 floors, 15 shops with glass shopfronts and paired elevators)** and an empty custom layout
 - Move, rotate (`Shift` for free angle) and resize; snapping to walls and furniture edges (walls first). Nearby items of the same kind show dashed bounding boxes, and row / column **extension lines** let you line up items that sit far apart
 - Furniture cannot pass through walls: dropping onto a wall or opening shows a red warning with the reason and reverts on release
 - Measure tool with wall snapping, `Shift` locks the axis
@@ -44,6 +44,12 @@ Multi-floor and loft mezzanines are supported, along with wall materials, 3D qua
 - Walk-through: `WASD` + mouse on desktop, virtual joystick on touch; starts outside the entry door, renders solid; areas without a floor are inaccessible, so you cannot fall through slab edges
 - Section height presets: 2.8m / 3.5m / 4.5m / storey height (follows the current level automatically), plus a translucent exterior-wall toggle for inspecting the interior
 - Sun-time slider, night lighting, "all floors" toggle (solid with furniture vs. translucent massing), roof and site toggles
+- Engine-level interaction: click a barrier to raise its boom, click the community gate to slide it open, pulsing fountain jets
+- Furniture drop-in: entering 3D or re-enabling "Furniture" drops the current level's furniture from above with a bounce; large sets are staggered to finish within 2s and the render loop only updates items already in flight
+- Report calculations run in a Web Worker: garage connectivity / ramps / earthwork / massing metrics / net room areas (region booleans), with the main thread only receiving results and automatic synchronous fallback
+- Performance HUD: View → Performance → Perf HUD shows FPS / draw calls / triangles / furniture / instances / wall runs / shadows in the bottom status bar
+- Seasonal and night skins: spring petals / autumn leaves / winter snow particles, plus festive string lights in tree canopies at night
+- Performance: trees / shrubs / cars of the same type and colour switch to `InstancedMesh` at 6+ copies; the selected instance is temporarily materialised so drag / rotate still work. Per-item furniture and whole-floor ghosts keep their material baking
 - **Quality presets (performance)**: View → Performance → Auto / Low / Medium / High
   - "Auto" picks Low / Medium / High from the current platform and hardware (touch, CPU cores, memory)
   - Presets control render pixel ratio, antialiasing, shadows and shadow-map size, interior point-light count and environment reflections
@@ -68,6 +74,8 @@ Multi-floor and loft mezzanines are supported, along with wall materials, 3D qua
 **Plan & statistics**
 - Automatic room area and counted floor area (stair openings and voids are deducted)
 - Flooring cost estimate with 5% waste (indoor materials and outdoor paving are labelled separately)
+- Massing metrics: site area from the **land parcel line** (or the site extent when absent), gross floor area from massing footprints × floors, plus FAR, coverage and green ratio (lawn / flower beds / tree grids / aquatic plants / roof soil), tied to stalls per household; the fallback basis is labelled in the panel
+- Parking metrics and auto layout: right-click a room / area → **Auto parking layout**. Rectangular outlines get a garage module (rows adapt to depth, the long side becomes the parking direction); irregular or holed outlines are filled stall-by-stall, keeping only stalls whose four corners and centre are inside, with clipped aisle centre lines and a column grid added automatically. The overview panel aggregates total / EV / accessible / tandem / compact stalls across all floors, reports stalls per household and EV / accessible shares, and a **Garage Checks** list flags the household ratio, EV share, accessible stalls, garage entrance, aisle connectivity (whether every stall is reachable from an entrance) and ramp slope against rule presets (Basic / Standard / Premium), reports roof-soil and excavation estimates, and exports a CSV report of metrics, checks, connectivity, ramps and earthwork
 - Undo / redo (150 steps); the plan is saved automatically in browser `localStorage`
 - Chinese / English UI (Chinese by default, remembered)
 - Export a PNG image; export / import the plan as JSON (all floors, furniture, areas, walls and openings — no view state)
@@ -130,6 +138,13 @@ Menu: `View → Performance`. Presets only affect rendering cost, never the plan
 
 - **Auto** is not a preset of its own: clicking it resolves the device (touch, CPU cores, `deviceMemory`) to Low / Medium / High and applies that preset; the button shows which one is suggested.
 - Pixel ratio, shadows, light count and reflections apply immediately. Antialiasing is fixed when the renderer is created, so it takes effect the next time you enter 3D.
+
+## Sandbox asset conventions
+
+- **Units & orientation**: all assets use real millimetres, anchored at the bottom centre, facing `+x` to match plan `rotate`; drag, rotate and snap do not depend on per-asset conventions.
+- **Material slots**: 3D assets are split by material (walls / trim / glass / metal / roof / shopfront) and merged during baking; a typical asset ends up with 2–10 meshes, so hundreds of buildings stay within a manageable draw-call budget.
+- **LOD**: at the site LOD the 2D plan draws only sandbox assets, never interior furniture; 3D furniture is baked per material + shadow setting. Repeated props such as trees and cars are still baked per instance — the next step is `InstancedMesh` / billboards.
+- **Metrics share the source of truth**: building floor counts, garage layout and green-area types live in `core`, and the 2D icons, 3D models and metrics panel all read the same data, so drawn geometry and reported numbers cannot drift apart.
 
 ## Tech stack
 

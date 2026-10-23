@@ -8,6 +8,8 @@
         <span class="ico" aria-hidden="true">◧</span>{{ tr('家具库', 'Library') }}
       </button>
       <LevelBar/>
+      <!-- 总图档工具条：选择 / 放楼栋 / 画道路 -->
+      <SiteBar v-if="siteMode"/>
     </div>
 
     <!-- 右上角：收起的右侧属性面板 -->
@@ -41,17 +43,22 @@
 import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import LevelBar from '@/shell/overlay/LevelBar.vue';
+import SiteBar from '@/shell/overlay/SiteBar.vue';
 import ContextMenu from '@/shell/overlay/ContextMenu.vue';
 import AiPanel from '@/ai/AiPanel.vue';
 import { useUiStore, useViewStore } from '@/stores/index.js';
 import { COARSE } from '@/core/model/plan.js';
+import { lodOf, LOD } from '@/core/model/lod.js';
 import { tr } from '@/i18n.js';
 
 const uiStore = useUiStore();
 const viewStore = useViewStore();
 const { ui } = uiStore;
-const { scaleBar } = storeToRefs(viewStore);
+const { view, scaleBar } = storeToRefs(viewStore);
 const { expandPane, paneCollapsed } = uiStore;
+
+/** 总图档（缩到 1:N > 2500）：换成总图工具条 */
+const siteMode = computed(() => lodOf(view.value.s) === LOD.SITE);
 
 /* 宽屏下左侧 / 右侧面板收起后，在对应角落显示浮层按钮（窄屏为抽屉，不显示） */
 const libCollapsed   = computed(() => paneCollapsed('lib'));

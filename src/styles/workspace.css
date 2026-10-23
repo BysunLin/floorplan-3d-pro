@@ -3,6 +3,9 @@
 #plan.panning{cursor:grabbing}
 #plan.tool-measure{cursor:crosshair}
 #plan.tool-region{cursor:crosshair}
+/* 总图档：室内元素不渲染，画布只做平移浏览 */
+#plan.lod-site{cursor:grab}
+#plan.lod-site.panning{cursor:grabbing}
 #plan .wall{pointer-events:none}
 #plan.tool-demolish .wall{pointer-events:all;cursor:pointer}
 #plan.tool-demolish .wall:hover{fill:#d9894f}
@@ -22,6 +25,9 @@
   stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.95}
 #plan .bad-box{fill:rgba(184,65,44,.08);stroke:#b8412c;stroke-width:2;stroke-dasharray:9 5;
   vector-effect:non-scaling-stroke}
+/* 画墙：附近墙体边线 / 中线延长出来的对齐线（与墙工具同色） */
+#plan .align-guide{stroke:#2f8f6a;stroke-width:1.2;stroke-dasharray:8 6;
+  stroke-linecap:round;vector-effect:non-scaling-stroke;opacity:.9}
 #plan .bad-tip{fill:#b8412c;font-weight:600}
 /* ---------- 工作区辅助浮层（相对 .ui-center 定位） ---------- */
 .overlay-layer{pointer-events:none}   /* 布局位置由 AppShell 的 .ui-center 决定 */
@@ -78,6 +84,7 @@
   color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 #tip{overflow:hidden;text-overflow:ellipsis}
 .statusbar b{color:var(--ink);font-weight:500}
+.statusbar .perf{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;letter-spacing:.2px}
 /* ---------- 分段控件：2D / 3D 与 工具切换共用同一套样式 ---------- */
 .seg{padding:3px}
 .seg .btn{min-width:74px;padding:5px 10px;border-radius:6px;text-align:center;

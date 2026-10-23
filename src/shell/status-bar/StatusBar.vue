@@ -6,6 +6,18 @@
       <span>{{ tr('当前比例', 'Scale') }}</span> <b id="ratio">{{ ratioText }}</b>
     </span>
     <span id="hover" class="only2d" v-html="cursor.hover"></span>
+
+    <!-- 3D 性能 HUD：视图 → 性能 HUD 控制显隐 -->
+    <span v-if="viewMode === '3d' && opt.perfHud" class="perf only3d">
+      <b>{{ perf.fps }}</b> FPS
+      · <b>{{ perf.calls }}</b> {{ tr('绘制调用', 'draw calls') }}
+      · <b>{{ fmt(perf.tris) }}</b> {{ tr('三角面', 'tris') }}
+      · {{ tr('家具', 'furniture') }} <b>{{ perf.furn }}</b>
+      · {{ tr('实例', 'instances') }} <b>{{ perf.inst }}</b>
+      · {{ tr('墙段', 'wall runs') }} <b>{{ perf.walls }}</b>
+      · {{ tr('阴影', 'shadow') }} <b>{{ perf.shadow ? tr('开', 'on') : tr('关', 'off') }}</b>
+    </span>
+
     <span class="spacer"></span>
     <span id="tip">{{ tip }}</span>
   </div>
@@ -29,7 +41,13 @@ const viewStore = useViewStore();
 const uiStore = useUiStore();
 const { cursor } = viewStore;
 const { ratioText } = storeToRefs(viewStore);
-const { viewMode } = storeToRefs(uiStore);
+const { viewMode, perf, opt } = storeToRefs(uiStore);
 
 const tip = computed(() => TIPS()[viewMode.value]);
+const fmt = n => {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return (v/1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v/1e3).toFixed(1) + 'k';
+  return String(Math.round(v));
+};
 </script>

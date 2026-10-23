@@ -9,12 +9,14 @@
     "dev": "vite",
     "build": "vite build",
     "build:single": "vite build --mode single",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/"
   },
   "dependencies": {
     "pinia": "^4.1.0",
     "three": "^0.160.0",
-    "vue": "^3.4.21"
+    "vue": "^3.4.21",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",

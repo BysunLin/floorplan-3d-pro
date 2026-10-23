@@ -5,23 +5,31 @@
  *  不保存 2D/3D 视图状态（当前模式、视口、相机、图层开关），
  *  导入后由应用按默认视图展示。
  *
- *  兼容：旧版本导出的是裸 state（顶层直接是 furniture / levels …），读取时自动识别；
+ *  v2（当前）：墙 / 门窗 / 区域 / 家具以节点图（nodes[levelId]）保存，
+ *             对应的扁平数组在导入时由 core/nodes/document.js 投影出来。
+ *  v1：plan 里直接存扁平数组。
+ *
+ *  兼容：v1 文件、旧版裸 state（顶层直接是 furniture / levels …）都能读；
  *  带 view 字段的旧文件也能读，只是忽略其中的显示状态。
  * ========================================================================== */
+import { splitDocumentPlan, joinDocumentPlan } from '@/core/nodes/document.js';
+
 export const PROJECT_FORMAT = 'floorplan-3d-pro';
-export const PROJECT_VERSION = 1;
+export const PROJECT_VERSION = 2;
 
 /**
- * 组装导出文档。
+ * 组装导出文档：plan 去掉投影字段，节点图单独放在 nodes。
  * @param {{ plan: object, appVersion?: string }} input
  */
 export function buildProjectDocument({ plan, appVersion = '' } = {}){
+  const { plan: docPlan, nodes } = splitDocumentPlan(plan || {});
   return {
     format: PROJECT_FORMAT,
     formatVersion: PROJECT_VERSION,
     app: { name: 'floorplan-3d-pro', version: appVersion },
     exportedAt: new Date().toISOString(),
-    plan
+    plan: docPlan,
+    nodes
   };
 }
 
@@ -44,7 +52,14 @@ export function readProjectDocument(raw){
   const version = Number(raw.formatVersion) || 0;
   if (version > PROJECT_VERSION)
     throw new Error(`方案版本过高（v${version}），请升级应用后再打开`);
-  if (!raw.plan || !Array.isArray(raw.plan.furniture))
+  if (!raw.plan || typeof raw.plan !== 'object')
+    throw new Error('方案数据不完整');
+
+  // v2：以节点图为主数据，投影出墙 / 门窗 / 区域 / 家具
+  if (version >= 2 && raw.nodes && typeof raw.nodes === 'object')
+    return { plan: joinDocumentPlan(raw.plan, raw.nodes, { strict: true }), legacy: false };
+
+  if (!Array.isArray(raw.plan.furniture))
     throw new Error('方案数据不完整');
 
   return { plan: raw.plan, legacy: false };

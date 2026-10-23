@@ -1314,135 +1314,432 @@ const gardenLevelData = () => Object.assign(gardenB1Data(), gardenL2Data());
 /* ============================================================================
  *  商场样板（3 层 · 单层约 3744 m²）
  *
- *  · 内部净尺寸 78000 × 48000，外墙 300、内隔墙 200（全部正交，暂不支持斜墙）；
- *  · 南北两条商铺带（各 4 + 4 间 + 中部 1 间主力店），中间 8m 宽中央通道；
- *  · 中部 x 32000~46000 / y 12000~32000 为通高中庭，二三层用「挑空」材质；
+ *  · 内部净尺寸 78000 × 48000，外墙 300、内隔墙 200、店面玻璃幕墙 120；
+ *  · 「十」字动线：东西向中央通道（净宽 10 m）+ 南北向入口门厅（净宽 6 m），
+ *    交叉处为 14 × 10 m 通高中庭，二三层用「挑空」材质（无楼板、无顶灯）；
+ *  · 中庭正中是岛式电梯厅：两部首层电梯**左右并排**（门朝北开向中庭）；
+ *    东西两条主动线上各布置一组上下行自动扶梯（左右并排、一上一下）；
+ *  · 15 间商铺沿动线两侧排布（火锅 / 中餐 / 西餐 / 奶茶 / 咖啡 / 服装 ×2 /
+ *    数码 / 美妆 / 珠宝 / 书店 / 运动 / 家居 / 超市 / 汽车展厅），
+ *    面向行人动线的一侧统一是「玻璃幕墙 + 玻璃推拉门」；餐饮类自带后厨；
  *  · 层高：一层 5.5m、二 / 三层 5.0m —— 3D 剖切请用「层高」档或 4.5m。
  * ========================================================================== */
 const MALL_W = 78000, MALL_D = 48000;
+const MALL_IW = 200;                                   // 内隔墙厚
+const MALL_GLASS = 120;                                // 店面玻璃幕墙厚
+const MALL_CY0 = 19000, MALL_CY1 = 29000;              // 东西向中央通道（主动线）y 范围
+const MALL_HX0 = 35000, MALL_HX1 = 41000;              // 南北向入口门厅（次动线）x 范围
+const MALL_AX0 = 32000, MALL_AX1 = 46000;              // 中庭 x 范围
+const MALL_EL = { x0: 34000, x1: 40000, y0: 21000, y1: 25000 };  // 中庭岛式电梯厅
+const MALL_ENTRY_W = 3200;                             // 店面入口宽上限（居中，不超过店面 34%）
 
-/** 商铺带：把 [x0,x1] 等宽切成 n 间，隔墙 200 居中；返回墙体与房间（编号可指定起始值） */
-function mallShops(x0, x1, y0, y1, n, pfx, nameZh, no0 = 1){
-  const walls = [], rooms = [], step = (x1 - x0) / n, mids = [];
-  for (let i = 1; i < n; i++){
-    const m = Math.round(x0 + step*i);
-    mids.push(m);
-    walls.push([m - 100, y0, m + 100, y1, 'n']);
-  }
-  for (let i = 0; i < n; i++){
-    const a = i === 0 ? x0 : mids[i - 1] + 100;
-    const b = i === n - 1 ? x1 : mids[i] - 100;
+/**
+ * 一条商铺带：沿 x 依次排开店中店。
+ *  · 面向动线的一侧（front='s' 朝 +y / 'n' 朝 -y）统一是玻璃幕墙 + 居中玻璃推拉门；
+ *  · kitchen = 后厨进深（mm），0 表示不设后厨；后厨隔墙 + 厨房门自动生成。
+ * @returns {{walls:Array, slides:Array, doors:Array, rooms:Array}}
+ */
+function mallBand({ x0, y0, y1, front, shops }){
+  const walls = [], slides = [], doors = [], rooms = [];
+  const faceS = front === 's';                             // 店面朝 +y（南）
+  const gA = faceS ? y1 - MALL_GLASS : y0;                 // 玻璃幕墙 y 区间
+  const gB = faceS ? y1 : y0 + MALL_GLASS;
+  const inF = faceS ? y1 - MALL_GLASS : y0 + MALL_GLASS;   // 店面（房间）内侧
+  const pA = faceS ? y0 : inF;                             // 分间墙 y 区间
+  const pB = faceS ? inF : y1;
+
+  const spans = [];
+  let cx = x0;
+  for (const s of shops){ spans.push([cx, cx + s.w]); cx += s.w; }
+
+  shops.forEach((s, i) => {
+    const [xa, xb] = spans[i];
+    const w0 = i === 0 ? xa : xa + MALL_IW/2;              // 房间 / 玻璃的内侧边界
+    const w1 = i === shops.length - 1 ? xb : xb - MALL_IW/2;
+    if (i > 0) walls.push([xa - MALL_IW/2, pA, xa + MALL_IW/2, pB, 'n']);
+
+    /* 玻璃幕墙 + 居中玻璃推拉门（店面入口） */
+    const ew = Math.min(MALL_ENTRY_W, Math.round((w1 - w0)*.34/100)*100);
+    const mid = Math.round((w0 + w1)/2);
+    const e0 = mid - Math.round(ew/2), e1 = mid + Math.round(ew/2);
+    if (e0 - w0 > 200) walls.push([w0, gA, e0, gB, 'g']);
+    if (w1 - e1 > 200) walls.push([e1, gA, w1, gB, 'g']);
+    slides.push({ rect: [e0, gA, e1, gB], v: false });
+
+    /* 后厨：贴着后墙，隔墙 + 厨房门（门洞开在靠东侧） */
+    const kd = s.kitchen || 0;
+    const kit = kd ? (faceS ? [y0, y0 + kd] : [y1 - kd, y1]) : null;
+    const main = kd
+      ? (faceS ? [y0 + kd + MALL_IW, inF] : [inF, y1 - kd - MALL_IW])
+      : (faceS ? [y0, inF] : [inF, y1]);
+
     rooms.push({
-      id: pfx + (no0 + i), name: `${nameZh} ${no0 + i}`, mat: 'tile800',
-      at: [Math.round((a + b)/2), Math.round((y0 + y1)/2)],
-      poly: RECT(a, y0, b, y1)
+      id: s.id, name: s.name, mat: s.mat || 'tile800',
+      at: [Math.round((w0 + w1)/2), Math.round((main[0] + main[1])/2)],
+      poly: RECT(w0, main[0], w1, main[1])
     });
-  }
-  return { walls, rooms };
+    if (kit){
+      rooms.push({
+        id: `${s.id}_k`, name: `${s.name}·后厨`, mat: 'tile600',
+        at: [Math.round((w0 + w1)/2), Math.round((kit[0] + kit[1])/2)],
+        poly: RECT(w0, kit[0], w1, kit[1])
+      });
+      const py = faceS ? y0 + kd : y1 - kd - MALL_IW;
+      const dw = 1200, dx1 = w1 - 200, dx0 = dx1 - dw;
+      walls.push([w0, py, dx0, py + MALL_IW, 'n'], [dx1, py, w1, py + MALL_IW, 'n']);
+      doors.push({
+        name: '厨房门', rect: [dx0, py, dx1, py + MALL_IW],
+        h: [dx0, py], c: [1, 0], o: faceS ? [0, -1] : [0, 1], len: dw
+      });
+    }
+  });
+  return { walls, slides, doors, rooms };
 }
 
-const mallNW = mallShops(0, 32000, 0, 18000, 4, 'nw', '北商铺', 1);
-const mallNE = mallShops(46000, MALL_W, 0, 18000, 4, 'ne', '北商铺', 5);
-const mallSW = mallShops(0, 32000, 26000, MALL_D, 4, 'sw', '南商铺', 1);
-const mallSE = mallShops(46000, MALL_W, 26000, MALL_D, 4, 'se', '南商铺', 5);
+/* 四条商铺带：北侧西段 / 北侧东段 / 南侧西段 / 南侧东段（入口门厅把南北各切成两段） */
+const MALL_BANDS = [
+  mallBand({ x0: 0, y0: 0, y1: MALL_CY0, front: 's', shops: [
+    { id: 'nw1', name: '火锅店',   w: 8000, kitchen: 7000 },
+    { id: 'nw2', name: '中餐店',   w: 7000, kitchen: 7000 },
+    { id: 'nw3', name: '西餐店',   w: 7000, kitchen: 7000 },
+    { id: 'nw4', name: '奶茶店',   w: 6000, kitchen: 4000 },
+    { id: 'nw5', name: '咖啡店',   w: 7000, kitchen: 4000 }
+  ]}),
+  mallBand({ x0: MALL_HX1, y0: 0, y1: MALL_CY0, front: 's', shops: [
+    { id: 'ne1', name: '服装店',     w: 9250 },
+    { id: 'ne2', name: '数码产品店', w: 9250 },
+    { id: 'ne3', name: '美妆店',     w: 9250 },
+    { id: 'ne4', name: '珠宝店',     w: 9250 }
+  ]}),
+  mallBand({ x0: 0, y0: MALL_CY1, y1: MALL_D, front: 'n', shops: [
+    { id: 'sw1', name: '超市',       w: 18000, mat: 'tile600' },
+    { id: 'sw2', name: '汽车销售店', w: 17000, mat: 'cement' }
+  ]}),
+  mallBand({ x0: MALL_HX1, y0: MALL_CY1, y1: MALL_D, front: 'n', shops: [
+    { id: 'se1', name: '书店',       w: 9250 },
+    { id: 'se2', name: '运动用品店', w: 9250 },
+    { id: 'se3', name: '服装店',     w: 9250 },
+    { id: 'se4', name: '家居店',     w: 9250 }
+  ]})
+];
 
 const MALL_GEO = {
   walls: [
-    /* ---- 外围墙（300，外墙 e）：北 / 南两段留出窗与门洞 ---- */
-    [-300, -300, 6000, 0, 'e'], [14000, -300, 16000, 0, 'e'], [18000, -300, 30000, 0, 'e'],
-    [48000, -300, 62000, 0, 'e'], [70000, -300, MALL_W + 300, 0, 'e'],
-    [-300, MALL_D, 8000, MALL_D + 300, 'e'], [16000, MALL_D, 36000, MALL_D + 300, 'e'],
-    [38000, MALL_D, 60000, MALL_D + 300, 'e'], [68000, MALL_D, MALL_W + 300, MALL_D + 300, 'e'],
-    [-300, 0, 0, MALL_D, 'e'], [MALL_W, 0, MALL_W + 300, MALL_D, 'e'],
+    /* ---- 外围墙（300）：北 / 南留出入口与橱窗；入口两侧的幕墙用玻璃 ---- */
+    [-300, -300, 4000, 0, 'e'], [10000, -300, 16000, 0, 'e'], [22000, -300, 30000, 0, 'e'],
+    [30000, -300, 36000, 0, 'g'], [40000, -300, 46000, 0, 'g'],
+    [52000, -300, 66000, 0, 'e'], [72000, -300, MALL_W + 300, 0, 'e'],
+    [-300, MALL_D, 4000, MALL_D + 300, 'e'], [10000, MALL_D, 20000, MALL_D + 300, 'e'],
+    [26000, MALL_D, 30000, MALL_D + 300, 'e'],
+    [30000, MALL_D, 36000, MALL_D + 300, 'g'], [40000, MALL_D, 46000, MALL_D + 300, 'g'],
+    [52000, MALL_D, 66000, MALL_D + 300, 'e'], [72000, MALL_D, MALL_W + 300, MALL_D + 300, 'e'],
+    [-300, 0, 0, 6000, 'e'], [-300, 12000, 0, 34000, 'e'], [-300, 40000, 0, MALL_D, 'e'],
+    [MALL_W, 0, MALL_W + 300, 6000, 'e'], [MALL_W, 12000, MALL_W + 300, 34000, 'e'],
+    [MALL_W, 40000, MALL_W + 300, MALL_D, 'e'],
 
-    /* ---- 中央通道两侧（商铺内立面）：两端延伸到中庭侧墙，接缝处不留小豁口 ---- */
-    [0, 18000, 32200, 18200, 'n'], [45800, 18000, MALL_W, 18200, 'n'],
-    [0, 25800, 32200, 26000, 'n'], [45800, 25800, MALL_W, 26000, 'n'],
+    /* ---- 南北入口门厅两侧（把南北商铺带切成东西两段） ---- */
+    [MALL_HX0 - MALL_IW, 0, MALL_HX0, MALL_CY0, 'n'],
+    [MALL_HX1, 0, MALL_HX1 + MALL_IW, MALL_CY0, 'n'],
+    [MALL_HX0 - MALL_IW, MALL_CY1, MALL_HX0, MALL_D, 'n'],
+    [MALL_HX1, MALL_CY1, MALL_HX1 + MALL_IW, MALL_D, 'n'],
 
-    /* ---- 中庭：南北封墙，东西两段只封商铺外侧（中间开口通向通道） ---- */
-    [32000, 12000, 46000, 12200, 'n'], [32000, 31800, 46000, 32000, 'n'],
-    [32000, 12000, 32200, 18000, 'n'], [45800, 12000, 46000, 18000, 'n'],
-    [32000, 26000, 32200, 32000, 'n'], [45800, 26000, 46000, 32000, 'n'],
+    /* ---- 中庭岛式电梯厅：南 / 西 / 东三面封墙，北侧开敞进厅 ---- */
+    [MALL_EL.x0, MALL_EL.y1 - MALL_IW, MALL_EL.x1, MALL_EL.y1, 'n'],
+    [MALL_EL.x0, MALL_EL.y0, MALL_EL.x0 + MALL_IW, MALL_EL.y1 - MALL_IW, 'n'],
+    [MALL_EL.x1 - MALL_IW, MALL_EL.y0, MALL_EL.x1, MALL_EL.y1 - MALL_IW, 'n'],
 
-    /* ---- 中部主力店两侧 ---- */
-    [32000, 0, 32200, 12000, 'n'], [45800, 0, 46000, 12000, 'n'],
-    [32000, 32000, 32200, MALL_D, 'n'], [45800, 32000, 46000, MALL_D, 'n'],
-
-    /* ---- 南北商铺带的分间墙 ---- */
-    ...mallNW.walls, ...mallNE.walls, ...mallSW.walls, ...mallSE.walls
+    /* ---- 四条商铺带：分间墙 + 玻璃店面 + 后厨隔墙 ---- */
+    ...MALL_BANDS.flatMap(b => b.walls)
   ],
-  // 采光带 / 店面窗（外墙洞口）
+  // 外墙橱窗（店面采光 / 展示）
   wins: [
-    [6000, -300, 14000, 0], [30000, -300, 48000, 0], [62000, -300, 70000, 0],
-    [8000, MALL_D, 16000, MALL_D + 300], [60000, MALL_D, 68000, MALL_D + 300]
+    [4000, -300, 10000, 0], [16000, -300, 22000, 0], [46000, -300, 52000, 0], [66000, -300, 72000, 0],
+    [4000, MALL_D, 10000, MALL_D + 300], [20000, MALL_D, 26000, MALL_D + 300],
+    [46000, MALL_D, 52000, MALL_D + 300], [66000, MALL_D, 72000, MALL_D + 300],
+    [-300, 6000, 0, 12000], [-300, 34000, 0, 40000],
+    [MALL_W, 6000, MALL_W + 300, 12000], [MALL_W, 34000, MALL_W + 300, 40000]
   ],
   doors: [
-    // 南侧主入口（对外，2000 宽）
-    { name: '入户门', rect: [36000, MALL_D, 38000, MALL_D + 300],
-      h: [36000, MALL_D], c: [1, 0], o: [0, -1], len: 2000, entry: true },
+    // 南侧主入口（两侧是玻璃幕墙 → 3D 里自动变成玻璃双扇门）
+    { name: '入户门', rect: [36000, MALL_D, 40000, MALL_D + 300],
+      h: [36000, MALL_D], c: [1, 0], o: [0, -1], len: 4000, dbl: true, entry: true },
     // 北侧次入口
-    { name: '入户门', rect: [16000, -300, 18000, 0],
-      h: [18000, 0], c: [-1, 0], o: [0, 1], len: 2000 }
+    { name: '入户门', rect: [36000, -300, 40000, 0],
+      h: [40000, 0], c: [-1, 0], o: [0, 1], len: 4000, dbl: true },
+    ...MALL_BANDS.flatMap(b => b.doors)
   ],
-  slides: [],
+  // 店面入口：玻璃推拉门（自动门），洞口两侧都是玻璃幕墙 → 3D 里按玻璃门渲染
+  slides: MALL_BANDS.flatMap(b => b.slides),
   lintels: [],
   rooms: [
-    // 通道与中庭之间没有墙（开口相连），楼板各自铺到 32200 / 45800 才不会有缝
-    { id: 'corridor_w', name: '中央通道', mat: 'marble', at: [16000, 22000],
-      poly: RECT(0, 18200, 32200, 25800) },
-    { id: 'corridor_e', name: '中央通道', mat: 'marble', at: [62000, 22000],
-      poly: RECT(45800, 18200, MALL_W, 25800) },
-    { id: 'atrium', name: '中庭', mat: 'marble', at: [39000, 22000],
-      poly: RECT(32200, 12200, 45800, 31800) },
-    { id: 'nm', name: '主力店 1', mat: 'tile800', at: [39000, 6000],
-      poly: RECT(32200, 0, 45800, 12000) },
-    { id: 'sm', name: '主力店 2', mat: 'tile800', at: [39000, 40000],
-      poly: RECT(32200, 32000, 45800, MALL_D) },
-    ...mallNW.rooms, ...mallNE.rooms, ...mallSW.rooms, ...mallSE.rooms
+    /* ---- 动线 ---- */
+    { id: 'corr_w', name: '中央通道', mat: 'marble', at: [16000, 24000],
+      poly: RECT(0, MALL_CY0, MALL_AX0, MALL_CY1) },
+    { id: 'corr_e', name: '中央通道', mat: 'marble', at: [62000, 24000],
+      poly: RECT(MALL_AX1, MALL_CY0, MALL_W, MALL_CY1) },
+    /* ---- 中庭：绕电梯厅分成四块，二三层整块改为挑空 ---- */
+    { id: 'atr_n', name: '中庭', mat: 'marble', at: [33000, 20000],
+      poly: RECT(MALL_AX0, MALL_CY0, MALL_AX1, MALL_EL.y0) },
+    { id: 'atr_s', name: '中庭', mat: 'marble', at: [33000, 27000],
+      poly: RECT(MALL_AX0, MALL_EL.y1, MALL_AX1, MALL_CY1) },
+    { id: 'atr_w', name: '中庭', mat: 'marble', at: [33000, 23000],
+      poly: RECT(MALL_AX0, MALL_EL.y0, MALL_EL.x0, MALL_EL.y1) },
+    { id: 'atr_e', name: '中庭', mat: 'marble', at: [43000, 23000],
+      poly: RECT(MALL_EL.x1, MALL_EL.y0, MALL_AX1, MALL_EL.y1) },
+    { id: 'elev_hall', name: '电梯厅', mat: 'tile800', at: [37000, 21900],
+      poly: RECT(MALL_EL.x0 + MALL_IW, MALL_EL.y0, MALL_EL.x1 - MALL_IW, MALL_EL.y1 - MALL_IW) },
+    /* ---- 南北入口门厅 ---- */
+    { id: 'hall_n', name: '门厅', mat: 'marble', at: [38000, 8000],
+      poly: RECT(MALL_HX0, 0, MALL_HX1, MALL_CY0) },
+    { id: 'hall_s', name: '门厅', mat: 'marble', at: [38000, 39000],
+      poly: RECT(MALL_HX0, MALL_CY1, MALL_HX1, MALL_D) },
+    /* ---- 商铺 ---- */
+    ...MALL_BANDS.flatMap(b => b.rooms)
   ],
   // 商场没有户外区域（卸货 / 广场可后续用「房间区域」自行拉出来）
   regions: [],
   bounds: { x: -4000, y: -4000, w: MALL_W + 8000, h: MALL_D + 8000 }
 };
 
-/* 商场初始道具：中庭扶梯 / 电梯、通道长椅与导视、商铺货架与收银台 */
-function mallFurniture(){
-  return [
-    F('escalator', '电梯（扶梯）', 37000, 21800, 1100, 3600, 90),
-    F('escalator', '电梯（扶梯）', 41200, 21800, 1100, 3600, 270),
-    F('elevator', '电梯', 30000, 22000, 1600, 1500),
-    F('bench', '长椅', 16000, 20200, 1800, 500),
-    F('bench', '长椅', 16000, 23800, 1800, 500, 180),
-    F('bench', '长椅', 62000, 20200, 1800, 500),
-    F('bench', '长椅', 62000, 23800, 1800, 500, 180),
-    F('bin', '垃圾箱', 24000, 21200, 400, 400),
-    F('bin', '垃圾箱', 54000, 22800, 400, 400),
-    F('signpost', '导视立牌', 30000, 19500, 900, 200),
-    F('signpost', '导视立牌', 48000, 24500, 900, 200),
-    F('plant', '绿植', 33000, 13200, 500, 500),
-    F('plant', '绿植', 45000, 13200, 500, 500),
-    F('plant', '绿植', 33000, 30800, 500, 500),
-    F('plant', '绿植', 45000, 30800, 500, 500),
-    F('cashier', '收银台', 4000, 1500, 2200, 700),
-    F('shelf', '货架', 2000, 9000, 1800, 600, 90),
-    F('shelf', '货架', 5000, 9000, 1800, 600, 90),
-    F('cashier', '收银台', 74000, 4500, 2200, 700),
-    F('shelf', '货架', 72000, 12000, 1800, 600, 90)
-  ];
+/* 商铺家具：按店面（朝动线一侧为前场，后墙一侧为后厨）逐间布置 */
+function mallShopFurniture(){
+  const out = [];
+  const put = (t, n, cx, cy, w, d, rot = 0, col) => out.push(F(t, n, cx, cy, w, d, rot, col));
+
+  /* ---------- 火锅店（0~7900）：后厨 + 火锅桌阵 + 卡座 ---------- */
+  put('kitchenline', '商用操作台', 1700, 900, 3200, 800, 0, '#c9ced3');
+  put('kitchenline', '商用操作台', 1700, 3300, 3200, 800, 0, '#c9ced3');
+  put('shelf', '货架', 2700, 6400, 3000, 600);
+  put('fridge', '四门冰箱', 7100, 700, 900, 750, 0, '#c9ced3');
+  put('diningbooth', '卡座', 1300, 8100, 1600, 1400);
+  put('diningbooth', '卡座', 6600, 8100, 1600, 1400);
+  [10800, 13400].forEach(y => [1500, 3950, 6400].forEach(x => put('hotpot', '火锅桌', x, y, 1400, 1400)));
+  put('hotpot', '火锅桌', 1300, 16200, 1400, 1400);
+  put('hotpot', '火锅桌', 6600, 16200, 1400, 1400);
+  put('cashier', '收银台', 6600, 18000, 2000, 700);
+  put('plant', '绿植', 400, 17200, 500, 500);
+
+  /* ---------- 中餐店（8100~14900） ---------- */
+  put('kitchenline', '商用操作台', 9800, 900, 3200, 800, 0, '#c9ced3');
+  put('kitchenline', '商用操作台', 13200, 900, 2400, 800, 0, '#c9ced3');
+  put('shelf', '货架', 11300, 6400, 3200, 600);
+  put('fridge', '四门冰箱', 8800, 700, 900, 750, 0, '#c9ced3');
+  put('diningbooth', '卡座', 8900, 8100, 1600, 1400);
+  put('diningbooth', '卡座', 14100, 8100, 1600, 1400);
+  [[10200, 10600], [13000, 10600], [10200, 13800], [13000, 13800]]
+    .forEach(([x, y]) => put('chinesetable', '中餐圆桌', x, y, 1800, 1800));
+  put('cashier', '收银台', 13800, 18000, 2000, 700);
+  put('plant', '绿植', 8300, 17800, 500, 500);
+
+  /* ---------- 西餐店（15100~21900）：吧台 + 卡座餐桌 ---------- */
+  put('kitchenline', '商用操作台', 16700, 900, 3200, 800, 0, '#c9ced3');
+  put('kitchenline', '商用操作台', 20000, 900, 2400, 800, 0, '#c9ced3');
+  put('shelf', '货架', 18500, 6400, 3000, 600);
+  put('fridge', '四门冰箱', 15800, 700, 900, 750, 0, '#c9ced3');
+  put('barcounter', '吧台', 15500, 11000, 2600, 600, 90);
+  [10100, 11100, 12100].forEach(y => put('barstool', '吧椅', 16200, y, 420, 420));
+  [[18000, 10400], [20500, 10400], [18000, 13600], [20500, 13600]].forEach(([x, y]) => {
+    put('table', '餐桌', x, y, 1200, 800);
+    put('chair', '餐椅', x - 500, y, 450, 480, 90);
+    put('chair', '餐椅', x + 500, y, 450, 480, 270);
+  });
+  put('cashier', '收银台', 20600, 18000, 2000, 700);
+  put('plant', '绿植', 21800, 17200, 500, 500);
+
+  /* ---------- 奶茶店（22100~27900）：操作台 + 吧椅 + 小桌 ---------- */
+  put('kitchenline', '商用操作台', 24000, 900, 3000, 800, 0, '#c9ced3');
+  put('fridge', '四门冰箱', 27200, 700, 900, 750, 0, '#c9ced3');
+  put('teabar', '奶茶操作台', 27400, 13600, 3000, 700, 270);
+  [12300, 13300, 14300].forEach(y => put('barstool', '吧椅', 26500, y, 420, 420));
+  [[23500, 9200], [26400, 9200], [23500, 6600], [26400, 6600]].forEach(([x, y]) => {
+    put('table', '餐桌', x, y, 1200, 800);
+    put('chair', '餐椅', x, y - 700, 450, 480, 0);
+    put('chair', '餐椅', x, y + 700, 450, 480, 180);
+  });
+  put('cashier', '收银台', 23000, 18000, 1600, 700);
+  put('plant', '绿植', 22200, 17600, 500, 500);
+
+  /* ---------- 咖啡店（28100~34900） ---------- */
+  put('kitchenline', '商用操作台', 30200, 900, 3000, 800, 0, '#c9ced3');
+  put('fridge', '四门冰箱', 34200, 700, 900, 750, 0, '#c9ced3');
+  put('barcounter', '吧台', 28600, 12000, 3000, 600, 270);
+  [10500, 11500, 12500, 13500].forEach(y => put('barstool', '吧椅', 29500, y, 420, 420));
+  [[32000, 8000], [34000, 8000], [32000, 11500]].forEach(([x, y]) => {
+    put('table', '餐桌', x, y, 1200, 800);
+    put('chair', '餐椅', x, y - 700, 450, 480, 0);
+    put('chair', '餐椅', x, y + 700, 450, 480, 180);
+  });
+  put('armchair', '单人沙发', 33800, 15200, 850, 850, 0, '#c9a98a');
+  put('armchair', '单人沙发', 33800, 16900, 850, 850, 180, '#c9a98a');
+  put('sidetable', '边几', 32300, 16000, 500, 500);
+  put('cashier', '收银台', 29200, 18100, 2000, 700);
+  put('plant', '绿植', 28300, 17800, 500, 500);
+
+  /* ---------- 服装店（41100~50150） ---------- */
+  [[42500, 9000], [42500, 12000], [48500, 9000], [48500, 12000]]
+    .forEach(([x, y]) => put('clothesrack', '服装陈列架', x, y, 1200, 500, 90));
+  put('clothesrack', '服装陈列架', 45000, 4000, 1200, 500);
+  put('clothesrack', '服装陈列架', 47500, 4000, 1200, 500);
+  put('mannequin', '模特', 43200, 16500, 450, 450);
+  put('mannequin', '模特', 49000, 16500, 450, 450);
+  put('fittingroom', '试衣间', 42000, 1600, 1200, 1200);
+  put('fittingroom', '试衣间', 43800, 1600, 1200, 1200);
+  put('cashier', '收银台', 48700, 18000, 2200, 700);
+  put('plant', '绿植', 41500, 17800, 500, 500);
+
+  /* ---------- 数码产品店（50350~59400） ---------- */
+  [51500, 53200, 54900, 56600, 58300].forEach(x => put('displaycounter', '展示柜', x, 3400, 1200, 600));
+  put('phonestand', '手机展台', 52500, 11000, 2400, 1200);
+  put('phonestand', '手机展台', 57000, 11000, 2400, 1200);
+  put('displaycounter', '展示柜', 50800, 16000, 1200, 600, 90);
+  put('displaycounter', '展示柜', 58900, 16000, 1200, 600, 90);
+  put('cashier', '收银台', 57800, 18000, 2200, 700);
+  put('plant', '绿植', 51000, 17500, 500, 500);
+
+  /* ---------- 美妆店（59600~68650） ---------- */
+  [60500, 62000, 63500, 65000, 66500, 68000].forEach(x => put('displaycounter', '展示柜', x, 3400, 1200, 600));
+  put('displaycounter', '展示柜', 61000, 10000, 1200, 600, 90);
+  put('displaycounter', '展示柜', 67500, 10000, 1200, 600, 90);
+  put('mannequin', '模特', 61800, 16500, 450, 450);
+  put('mannequin', '模特', 66600, 16500, 450, 450);
+  put('cashier', '收银台', 67000, 18000, 2200, 700);
+  put('plant', '绿植', 60000, 17500, 500, 500);
+
+  /* ---------- 珠宝店（68850~77900） ---------- */
+  [69500, 71000, 72500, 74000, 75500, 77000].forEach(x => put('displaycounter', '展示柜', x, 3400, 1200, 600));
+  put('displaycounter', '展示柜', 70500, 11000, 1200, 600, 90);
+  put('displaycounter', '展示柜', 76500, 11000, 1200, 600, 90);
+  put('cashier', '收银台', 76500, 18000, 2200, 700);
+  put('plant', '绿植', 69500, 17500, 500, 500);
+
+  /* ---------- 超市（0~17900，前场朝北） ---------- */
+  put('produce', '果蔬陈列台', 2800, 31200, 2000, 1200);
+  put('produce', '果蔬陈列台', 5500, 31200, 2000, 1200);
+  put('cart', '购物车', 5600, 30200, 900, 550);
+  put('cart', '购物车', 6650, 30200, 900, 550);
+  [35500, 38500, 41500, 44500].forEach(y => [3000, 6500, 12500, 16000]
+    .forEach(x => put('gondola', '超市货架', x, y, 1400, 900, 90)));
+  put('freezer', '冷藏柜', 800, 35000, 1800, 800, 90);
+  put('freezer', '冷藏柜', 800, 44000, 1800, 800, 90);
+  put('freezer', '冷藏柜', 17300, 40000, 1800, 800, 270);
+  put('shelf', '货架', 9000, 47300, 3000, 600);
+  [12500, 14500, 16500].forEach(x => put('cashier', '收银台', x, 31500, 2200, 700, 90));
+  put('plant', '绿植', 17400, 46800, 700, 700);
+
+  /* ---------- 汽车销售店（18100~34900，前场朝北） ---------- */
+  put('carstand', '汽车展台', 22800, 35500, 5200, 2600);
+  put('car', '轿车', 22800, 35500, 4600, 1800, 0, '#c8ccd2');
+  put('carstand', '汽车展台', 31200, 43500, 5200, 2600);
+  put('suv', 'SUV', 31200, 43500, 4800, 1950, 0, '#3f4753');
+  put('cashier', '收银台', 20200, 30500, 2400, 700);
+  put('table', '洽谈桌', 33500, 32500, 1400, 800);
+  put('chair', '洽谈椅', 33500, 31500, 450, 480, 0, '#cfc6b8');
+  put('chair', '洽谈椅', 33500, 33500, 450, 480, 180, '#cfc6b8');
+  put('sofa', '双人沙发', 19600, 47000, 1700, 880, 0, '#c3cbd6');
+  put('plant', '大绿植', 34200, 46800, 700, 700);
+
+  /* ---------- 书店（41100~50150） ---------- */
+  [35000, 39000, 43000].forEach(y => [42000, 44500, 49000]
+    .forEach(x => put('bookshelf', '大书架', x, y, 1600, 350, 90)));
+  put('table', '阅读桌', 46000, 46000, 1400, 800);
+  put('chair', '椅子', 44200, 46000, 450, 480, 90, '#cfc6b8');
+  put('chair', '椅子', 47800, 46000, 450, 480, 270, '#cfc6b8');
+  put('cashier', '收银台', 48600, 30500, 2000, 700);
+  put('plant', '绿植', 41500, 46500, 500, 500);
+
+  /* ---------- 运动用品店（50350~59400） ---------- */
+  [[52000, 35500], [52000, 39500], [58000, 35500], [58000, 39500]]
+    .forEach(([x, y]) => put('clothesrack', '服装陈列架', x, y, 1200, 500, 90));
+  [51500, 54500, 57500].forEach(x => put('shelf', '货架', x, 46500, 1800, 600));
+  put('mannequin', '模特', 52000, 32000, 450, 450);
+  put('mannequin', '模特', 58000, 32000, 450, 450);
+  put('treadmill', '跑步机', 55000, 43000, 800, 1800, 0, '#3a3a3c');
+  put('cashier', '收银台', 57800, 30500, 2200, 700);
+
+  /* ---------- 服装店 2（59600~68650） ---------- */
+  [[61000, 39000], [61000, 42000], [67000, 39000], [67000, 42000]]
+    .forEach(([x, y]) => put('clothesrack', '服装陈列架', x, y, 1200, 500, 90));
+  put('clothesrack', '服装陈列架', 63500, 46000, 1200, 500);
+  put('clothesrack', '服装陈列架', 66000, 46000, 1200, 500);
+  put('mannequin', '模特', 61800, 32300, 450, 450);
+  put('mannequin', '模特', 66600, 32300, 450, 450);
+  put('fittingroom', '试衣间', 60500, 45600, 1200, 1200);
+  put('fittingroom', '试衣间', 62300, 45600, 1200, 1200);
+  put('cashier', '收银台', 67200, 30500, 2200, 700);
+
+  /* ---------- 家居店（68850~77900） ---------- */
+  put('bed', '双人床 1.5m', 70500, 44500, 1500, 2000, 0, '#d8c7dc');
+  put('nightstand', '床头柜', 69250, 43900, 450, 400);
+  put('nightstand', '床头柜', 71900, 43900, 450, 400);
+  put('wardrobe', '衣柜', 76200, 46500, 2000, 600, 0, '#efe6d8');
+  put('sofa', '三人沙发', 73500, 33800, 2400, 900, 0, '#b7c4b0');
+  put('coffeetable', '茶几', 73500, 35500, 1300, 650);
+  put('rug', '地毯', 73500, 34800, 2400, 1700, 0, '#d9cbb8');
+  put('shelf', '货架', 73500, 31200, 2400, 600);
+  put('cashier', '收银台', 76500, 30300, 2200, 700);
+  put('plant', '大绿植', 69500, 30000, 700, 700);
+
+  return out;
 }
 
-/* 二 / 三层：扶梯 / 电梯保留，中庭改为挑空（无楼板、无顶灯） */
-function mallUpperFurniture(){
-  return [
-    F('escalator', '电梯（扶梯）', 37000, 21800, 1100, 3600, 90),
-    F('escalator', '电梯（扶梯）', 41200, 21800, 1100, 3600, 270),
-    F('elevator', '电梯', 30000, 22000, 1600, 1500),
-    F('bench', '长椅', 16000, 20200, 1800, 500),
-    F('bench', '长椅', 62000, 23800, 1800, 500, 180),
-    F('bin', '垃圾箱', 24000, 21200, 400, 400),
-    F('plant', '绿植', 33000, 13200, 500, 500),
-    F('plant', '绿植', 45000, 30800, 500, 500)
+/* 公共区（三层共用）：中庭电梯厅、自动扶梯、通道休息区、中岛摊位 */
+function mallPublicFurniture({ top = false } = {}){
+  const out = [
+    // 岛式电梯厅：两部首层电梯左右并排，门朝北（对着中庭北侧通道）
+    F('elevator', '电梯', 35800, 23800, 1600, 1500, 180),
+    F('elevator', '电梯', 38200, 23800, 1600, 1500, 180),
+    // 自动扶梯：东西两条主动线各一组，左右并排、一上一下（顶层不再向上接扶梯）
+    F('escalator', '电梯（扶梯）', 20000, 20500, 1100, 3600, 90),
+    F('escalator', '电梯（扶梯）', 57000, 20500, 1100, 3600, 90)
   ];
+  if (!top){
+    out.push(F('escalator', '电梯（扶梯）', 20000, 21700, 1100, 3600, 270));
+    out.push(F('escalator', '电梯（扶梯）', 57000, 21700, 1100, 3600, 270));
+  }
+  out.push(
+    // 中庭：服务台、导视、绿植
+    F('kiosk', '中岛摊位', 42500, 20000, 3000, 2000),
+    F('signpost', '导视立牌', 33000, 20000, 900, 200, 90),
+    F('signpost', '导视立牌', 45000, 28000, 900, 200, 90),
+    F('plant', '大绿植', 32500, 19400, 700, 700), F('plant', '大绿植', 45500, 19400, 700, 700),
+    F('plant', '大绿植', 32500, 28600, 700, 700), F('plant', '大绿植', 45500, 28600, 700, 700),
+    // 通道：长椅、垃圾箱、中岛摊位
+    F('bench', '长椅', 8000, 19400, 1800, 500),
+    F('bench', '长椅', 14000, 19400, 1800, 500),
+    F('bench', '长椅', 28500, 19400, 1800, 500),
+    F('bench', '长椅', 48000, 19400, 1800, 500),
+    F('bench', '长椅', 67000, 19400, 1800, 500),
+    F('bench', '长椅', 11000, 28600, 1800, 500, 180),
+    F('bench', '长椅', 52000, 28600, 1800, 500, 180),
+    F('bin', '垃圾箱', 10500, 19600, 400, 400),
+    F('bin', '垃圾箱', 60000, 28600, 400, 400),
+    F('kiosk', '中岛摊位', 15000, 24500, 3000, 2000),
+    F('kiosk', '中岛摊位', 62000, 24500, 3000, 2000),
+    // 南北门厅（入口动线）：长椅 + 绿植 + 中岛摊位
+    F('bench', '长椅', 36300, 6000, 1800, 500, 90),
+    F('bench', '长椅', 39700, 6000, 1800, 500, 90),
+    F('bench', '长椅', 36300, 11000, 1800, 500, 90),
+    F('bench', '长椅', 39700, 11000, 1800, 500, 90),
+    F('bench', '长椅', 36300, 36000, 1800, 500, 90),
+    F('bench', '长椅', 39700, 36000, 1800, 500, 90),
+    F('bench', '长椅', 36300, 42000, 1800, 500, 90),
+    F('bench', '长椅', 39700, 42000, 1800, 500, 90),
+    F('plant', '大绿植', 35300, 18300, 700, 700), F('plant', '大绿植', 40700, 18300, 700, 700),
+    F('plant', '大绿植', 35300, 29700, 700, 700), F('plant', '大绿植', 40700, 29700, 700, 700),
+    F('kiosk', '中岛摊位', 38000, 14500, 2600, 1600),
+    F('kiosk', '中岛摊位', 38000, 34500, 2600, 1600)
+  );
+  return out;
+}
+
+/* 一层：商铺内部布置 + 公共区道具 */
+function mallFurniture(){
+  return [...mallShopFurniture(), ...mallPublicFurniture()];
+}
+
+/* 二 / 三层：商铺保留货架（只是形象层），公共区扶梯 / 电梯保留 */
+function mallUpperFurniture(top){
+  return [...mallShopFurniture(), ...mallPublicFurniture({ top })];
 }
 
 const mallLevels = () => ([
@@ -1458,14 +1755,25 @@ const mallRoomMeta = over => {
   return Object.assign(out, over);
 };
 
-const mallUpperData = seed => ({
-  furniture: mallUpperFurniture(),
-  rooms: mallRoomMeta({ atrium: { name: '中庭', mat: 'void', light: 'none' } }),
+/* 中庭在二三层是通高挑空（无楼板 / 无顶灯） */
+const MALL_VOID = {
+  atr_n: { name: '中庭', mat: 'void', light: 'none' },
+  atr_s: { name: '中庭', mat: 'void', light: 'none' },
+  atr_w: { name: '中庭', mat: 'void', light: 'none' },
+  atr_e: { name: '中庭', mat: 'void', light: 'none' }
+};
+
+const mallUpperData = (seed, top) => ({
+  furniture: mallUpperFurniture(top),
+  rooms: mallRoomMeta(MALL_VOID),
   demolished: [], measures: [], walls: [], wins: [], doors: [], slides: [], bays: [],
   regions: [], deletedRooms: [], regionSeed: seed, elemNames: {}, wallMats: {}
 });
 
-const mallLevelData = () => ({ L2: mallUpperData('mall@2'), L3: mallUpperData('mall@3') });
+const mallLevelData = () => ({
+  L2: mallUpperData('mall@2', false),
+  L3: mallUpperData('mall@3', true)
+});
 
 /* ---------- 户型注册表 ---------- */
 const PLANS = {
@@ -1551,7 +1859,7 @@ const PLANS = {
     geoVersion: 3                          // v3：新增负一层地下车库（旧存档需补层 / 刷新层高）
   },
   'mall': {
-    zh: '商场样板(beta)',
+    zh: '商场样板',
     en: 'Mall Sample',
     geo: MALL_GEO,
     furniture: mallFurniture,
@@ -1559,7 +1867,7 @@ const PLANS = {
     levelData: mallLevelData,
     hasDims: false,
     area: 3744,                      // 单层套内约 3744 m²（78 × 48）
-    geoVersion: 1
+    geoVersion: 2                    // v2：十动线 + 玻璃店面 + 并排电梯 + 15 间业态商铺
   },
   'custom': {
     zh: '自定义户型',
@@ -1573,6 +1881,15 @@ const PLANS = {
 };
 
 export const DEFAULT_PLAN = '3b2b';
+
+/* 启动首页「从样板间开始」的前三推荐（顺序即展示顺序） */
+export const FEATURED_PLANS = ['3b2b', 'villa', 'garden'];
+
+/* 「展示全部」时的完整样板间列表：推荐的三套排在最前，其余按面积从大到小 */
+export const ALL_PLANS = [
+  '3b2b', 'villa', 'garden',
+  '4b2l', '2b1l', '1b1l', 'studio', 'loft', 'mall', 'custom'
+];
 
 /* ---------- 运行时户型 ----------
  * 「导入户型图」识别出来的几何不属于内置样板，运行时注册到这张表里：

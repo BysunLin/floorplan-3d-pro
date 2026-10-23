@@ -3,9 +3,8 @@ import * as THREE from 'three';
 export const ISO_DIR = new THREE.Vector3(5.5, 15.5, 10).normalize();
 /* 整体视图的注视高度：约墙高一半，使带墙体的户型在画面里上下居中 */
 export const FOCUS_Y = 1.2;
-/* 洞口上缘高度：平开门 2.1 m，推拉门 2.4 / 2.1 m（门扇与过梁共用，避免门顶留缝） */
-export const DOOR_H = 2.1;
-export const slideHead = s => s.v ? 2.4 : DOOR_H;
+/* 洞口上缘高度：统一由 core/nodes/constants.js 提供（2D / 3D / 节点模型共用一份） */
+export { DOOR_H, slideHead } from '@/core/nodes/constants.js';
 /* 门套（门垛 / 上槛）宽度：门扇净宽 = 洞口宽 - 2×DOOR_CASE */
 export const DOOR_CASE = .03;
 /* 站立视高（m）：漫游时相机高度 = 视高 + 脚下（楼梯 / 扶梯）标高 */

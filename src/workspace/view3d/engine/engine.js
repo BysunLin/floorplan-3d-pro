@@ -5,6 +5,7 @@ import { EYE_H } from './constants.js';
 import { buildMethods } from './methods/build.js';
 import { cameraMethods } from './methods/camera.js';
 import { walkMethods } from './methods/walk.js';
+import { gizmoMethods } from './methods/gizmo.js';
 import { lifecycleMethods } from './methods/lifecycle.js';
 
 export class View3D {
@@ -32,6 +33,8 @@ export class View3D {
     this.selDirty = true;                        // 选框需要重算
     this._selObjSig = '';                        // 选中对象的位姿签名
     this.colliders = [];
+    this.wallG = null;                             // 节点级墙体（整段挤出）单独成组，便于按墙增量更新
+    this.wallCache = new Map();                    // runId → { sig, group }：签名不变就复用 mesh
     this.doors = [];                               // 平开门（门扇开合 + 漫游碰撞）
     this.slides = [];                              // 推拉门扇（沿轨道滑动）
     this.doorState = {};                           // 门的开合记忆（重建几何后仍保持）
@@ -56,4 +59,4 @@ export class View3D {
 }
 
 /* 方法按职责分组定义在 methods/ 下，这里一次性挂到原型上 */
-Object.assign(View3D.prototype, buildMethods, cameraMethods, walkMethods, lifecycleMethods);
+Object.assign(View3D.prototype, buildMethods, cameraMethods, walkMethods, gizmoMethods, lifecycleMethods);

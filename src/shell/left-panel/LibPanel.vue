@@ -46,14 +46,25 @@
       </template>
 
       <template v-else>
-        <div class="lib-search">
-          <input
-            v-model="q"
-            type="search"
-            :placeholder="tr('搜索家具…', 'Search furniture…')"
-            @keydown.stop
-          />
-          <button v-if="q" class="clear" :title="tr('清除', 'Clear')" @click="q = ''">×</button>
+        <div class="lib-top">
+          <div class="lib-search">
+            <input
+              v-model="q"
+              type="search"
+              :placeholder="tr('搜索家具…', 'Search furniture…')"
+              @keydown.stop
+            />
+            <button v-if="q" class="clear" :title="tr('清除', 'Clear')" @click="q = ''">×</button>
+          </div>
+          <!-- 家具库分类页签：住宅 / 商业 / 户外（搜索时自动跨页签查找） -->
+          <div class="lib-tabs" role="tablist">
+            <button
+              v-for="t in LIB_TABS" :key="t.id"
+              class="lib-tab" :class="{on: tab === t.id}"
+              :aria-selected="tab === t.id" role="tab"
+              @click="tab = t.id"
+            >{{ tr(t.name, t.en) }}</button>
+          </div>
         </div>
 
         <template v-for="g in filtered" :key="g.cat">
@@ -84,7 +95,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { storeToRefs } from 'pinia';
 import RoomList from '@/shell/left-panel/RoomList.vue';
 import { usePlanStore, useUiStore, useViewStore } from '@/stores/index.js';
-import { LIB } from '@/core/library/index.js';
+import { LIB, LIB_TABS } from '@/core/library/index.js';
 import { WALL_LIB, wallSVG, wallViewBox } from '@/core/library/wallItems.js';
 import { COARSE, TAP, bbox, ROOMS } from '@/core/model/plan.js';
 import { furnSVG } from '@/core/library/furnSvg.js';
@@ -139,20 +150,24 @@ function onWallDown(e, it){
   setWallItem(ui.wallItem === it.id ? null : it.id);   // 再点一次取消选中
 }
 
-/* ---------------- 搜索过滤 ---------------- */
+/* ---------------- 搜索过滤 + 页签 ---------------- */
 const q = ref('');
+const tab = ref('home');
 
-/* 按关键字过滤家具：匹配本地化名 / 原始名 / 类型键；空关键字则显示全部 */
+/* 当前页签；有搜索关键字时跨页签搜索（结果更符合直觉） */
+const curTab = computed(() => LIB_TABS.some(t => t.id === tab.value) ? tab.value : 'home');
+
+/* 按关键字过滤家具：匹配本地化名 / 原始名 / 类型键；空关键字则按页签显示 */
 const filtered = computed(() => {
   const kw = q.value.trim().toLowerCase();
-  if (!kw) return LIB.map((c, ci) => ({ ci, cat: c.cat, items: c.items }));
   return LIB
     .map((c, ci) => {
-      const items = c.items.filter(it =>
-        nm(it[1]).toLowerCase().includes(kw) ||
-        String(it[1]).toLowerCase().includes(kw) ||
-        String(it[0]).toLowerCase().includes(kw)
-      );
+      const items = kw
+        ? c.items.filter(it =>
+          nm(it[1]).toLowerCase().includes(kw) ||
+          String(it[1]).toLowerCase().includes(kw) ||
+          String(it[0]).toLowerCase().includes(kw))
+        : (c.scope || 'home') === curTab.value ? c.items : [];
       return { ci, cat: c.cat, items };
     })
     .filter(g => g.items.length);

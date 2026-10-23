@@ -8,6 +8,7 @@
 import { reactive, ref, computed } from 'vue';
 import { defineStore } from 'pinia';
 import { narrow } from '@/core/model/plan.js';
+import { resetWallSnap } from '@/core/geometry/wallSnap.js';
 import { detectQuality } from '@/workspace/view3d/quality.js';
 import { setLang as applyLang } from '@/i18n.js';
 
@@ -27,6 +28,7 @@ export const useUiStore = defineStore('ui', () => {
     wallAxis: null,                  // 画墙：起点吸附到墙边后强制的轴向 'h' | 'v' | null
     wallSnap: null,                  // 画墙：起点所吸附的那段墙（归一化矩形 + 走向）
     wallHover: null,                 // 画墙：尚未落点时，悬浮在已有墙体上的起点提示 {x,y}
+    align: [],                       // 画墙：对齐辅助线 [{x1,y1,x2,y2}]（附近墙体边线延伸）
     openHover: null,                 // 门窗放置预览：{rect, horiz, len}
     regionDraw: null,                // 区域绘制：null 或 { a:{x,y}|null, b:{x,y}|null }
     regionSnap: null,                // 区域绘制：吸附指示 {x, y, kind:'vertex'|'edge'|null}
@@ -38,18 +40,34 @@ export const useUiStore = defineStore('ui', () => {
     dragReason: '',                  // '' | 'wall' | 'door'
     dragRect: null,                  // 非法落点的包围盒 {x,y,w,h}（mm）
     assist: [],                      // 同类邻居的辅助虚线框 [{id,cx,cy,hw,hh}]
-    guides: []                       // 对齐辅助线 [{x1,y1,x2,y2}]
+    guides: [],                      // 对齐辅助线 [{x1,y1,x2,y2}]
+    startOpen: false,                // 编辑中从顶部「开始」打开初始化界面（盖在编辑器上）
+    /* ---------- 总图（site 档）---------- */
+    siteTool: 'select',              // 'select' | 'building' | 'road'
+    siteSel: null,                   // { kind:'building'|'road', id }
+    siteRoad: null                   // 道路绘制中：{ pts:[[x,y],…], cur:[x,y] }
   });
 
   /* 3D 显示选项 */
   const opt = reactive({
     cut: 2.8, furn: true, labels: true, night: false, hour: 10, mode: 'orbit',
-    allFloors: true,           // 3D：整栋（其它楼层实色 + 家具） / 半透明体量
+    allFloors: false,           // 3D：整栋（其它楼层实色 + 家具） / 半透明体量
     wallAlpha: false,          // 3D：外墙半透明显示（便于看户型内部）
     roof: false,               // 3D：显示房顶（仅多楼层户型的顶层）
     site: true,                // 3D：场地（室外大地面 / 地下层基坑土体）
+    holiday: false,            // 3D：节庆灯饰（夜间树冠串灯）
+    season: 'none',            // 3D：季节粒子 'none' / 'spring' / 'autumn' / 'winter'
+    instancing: true,          // 3D：树木 / 车辆等同型构件走 InstancedMesh
+    perfHud: false,            // 3D：底部状态栏显示性能 HUD
     // 3D：画质档位 'low' / 'mid' / 'high'；初始值 = 「推荐」按当前设备挑出来的那一档
     quality: detectQuality()
+  });
+
+  /* 3D 性能采样：由引擎每 ~500ms 写入，状态栏只负责显示 */
+  const perf = reactive({
+    fps: 0, calls: 0, tris: 0,
+    furn: 0, inst: 0, walls: 0,
+    shadow: false
   });
 
   /** 清除拖拽辅助状态（结束拖动时调用） */
@@ -204,8 +222,23 @@ export const useUiStore = defineStore('ui', () => {
     ui.wallB = null;
     ui.wallAxis = null;
     ui.wallSnap = null;
+    ui.align = [];
     ui.wallHover = null;
     ui.openHover = null;
+  }
+
+  /* ======================= 初始化界面 ======================= */
+  /** 编辑中打开「从样板间开始」界面（顶部菜单的「开始」） */
+  function openStart(){
+    ui.menu = null;
+    ui.startOpen = true;
+  }
+  function closeStart(){ ui.startOpen = false; }
+
+  /* ======================= 总图（site 档） ======================= */
+  /** 结束道路绘制（落最后一条 / Esc 取消） */
+  function cancelSiteRoad(){
+    ui.siteRoad = null;
   }
 
   function cancelWallDraw(){
@@ -214,6 +247,8 @@ export const useUiStore = defineStore('ui', () => {
     ui.wallAxis = null;
     ui.wallSnap = null;
     ui.wallHover = null;
+    ui.align = [];
+    resetWallSnap();          // 方向吸附的滞后状态一并复位，下次画墙从干净状态开始
   }
 
   /* ======================= 语言 ======================= */
@@ -223,7 +258,7 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   return {
-    ui, opt, toast, panes, drawerOpen, viewMode, is3D, narrowMode,
+    ui, opt, perf, toast, panes, drawerOpen, viewMode, is3D, narrowMode,
     aiPanelOpen, aiConfigOpen, openAiPanel, closeAiPanel, openAiConfig, closeAiConfig,
     joy, keys, walk,
     showToast, drawer, closeDrawers, clearDragAssist,
@@ -231,6 +266,7 @@ export const useUiStore = defineStore('ui', () => {
     openMenu, closeMenu,
     setTool, clearMeasure, select, dropElemSel, setWallItem, cancelWallDraw,
     startRegionDraw, cancelRegionDraw,
+    openStart, closeStart, cancelSiteRoad,
     setLang
   };
 });

@@ -13,6 +13,9 @@
  *  逐个组件重新挂载。
  * ========================================================================== */
 import { reactive } from 'vue';
+import { WALL_LINE } from './uid.js';
+import { isSlantAB } from './wallLine.js';
+import { quadOf, aabbOfQuad } from '../geometry/seg.js';
 
 /* ---------- 单位与视口 ---------- */
 export const PX_MM = 25.4 / 96;                                // 1 CSS px = 0.2646 mm
@@ -21,9 +24,10 @@ export const TAP = COARSE ? 9 : 4;                              // 手指按下�
 export const narrow = () => matchMedia('(max-width:1100px)').matches;
 export const BOUNDS = reactive({ x: -1850, y: -1750, w: 15600, h: 14100 });
 
-/* 2D 缩放范围（px/mm）：下限放到 0.004（约 1px = 250mm），
- * 1000px 宽的视口可一次看全约 250m —— 商场 / 厂房这类大平面也放得下。 */
-export const MIN_SCALE = .004;
+/* 2D 缩放范围（px/mm）：下限放到 0.0006（约 1px = 1.7m），
+ * 1000px 宽的视口可一次看全约 1.7km —— 商场 / 厂房 / 小区总图都放得下。
+ * 缩到总图档（1:N > 2500）后由 core/model/lod.js 切成「楼栋轮廓 + 名称」。 */
+export const MIN_SCALE = .0006;
 export const MAX_SCALE = 2;
 export const clampScale = s => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
 
@@ -152,18 +156,22 @@ export const MAT_GROUPS = {
 /* ---------- 2D 平面上不显示名称的家具类型 ---------- */
 export const NOLABEL = ['plant', 'floorlamp', 'sidetable', 'barstool', 'beanbag',
   // 户外 / 车库：图例本身已经足够清楚，不再叠名称
-  'car', 'suv', 'mpv', 'parking', 'streetlamp', 'shrub', 'camphor',
+  'car', 'suv', 'mpv', 'parking', 'evparking', 'parkingrow', 'streetlamp', 'shrub', 'camphor',
+  'ginkgo', 'cherry', 'osmanthus',
+  // 地库小件：名称会互相压住
+  'garagecol', 'parkingaccessible', 'parkingsub', 'parkingcompact',
+  'speedbump', 'garagemirror', 'garagesign', 'fireroll', 'ventwell',
   // 道路标线（贴地装饰）
-  'lane', 'crosswalk', 'manhole'];
+  'lane', 'crosswalk', 'manhole',
+  // 商业小件：模特 / 购物车 尺寸小，名称会互相压住
+  'mannequin', 'cart'];
 
 /* ======================= 几何 / 格式化 ======================= */
 export const area  = poly => Math.abs(poly.reduce((a, p, i) => { const q = poly[(i+1) % poly.length]; return a + p[0]*q[1] - q[0]*p[1]; }, 0)) / 2 / 1e6;
 export const perim = poly => poly.reduce((a, p, i) => { const q = poly[(i+1) % poly.length]; return a + Math.hypot(q[0]-p[0], q[1]-p[1]); }, 0) / 1000;
 export const bbox  = poly => { const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
-export function aabb(f){
-  const a = f.rot * Math.PI/180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
-  return { hw: f.w/2*c + f.d/2*s, hh: f.w/2*s + f.d/2*c };
-}
+/* 旋转矩形的 AABB：与空间校验（core/geometry/collide.js）共用同一份实现 */
+export { furnAabb as aabb } from '../geometry/collide.js';
 export const norm = a => ((Math.round(a) % 360) + 360) % 360;
 export const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -225,6 +233,20 @@ export function wallRect(a, b, t, type){
   const y0 = Math.min(a.y, b.y) - (h ? t/2 : 0);
   const y1 = Math.max(a.y, b.y) + (h ? t/2 : 0);
   return [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1), type];
+}
+
+/**
+ * A、B 两点 + 墙厚 → 墙体矩形（正交）或「AABB + 中心线负载」（斜墙）。
+ *
+ * 正交时与 wallRect 逐字节一致 —— 现有户型 / 存档 / 断言全部不受影响；
+ * 斜墙时前 4 位只承担包围盒 / 命中区，真实几何在第 7 位（见 core/model/wallLine.js）。
+ */
+export function wallGeom(a, b, t, type){
+  if (!isSlantAB(a, b)) return wallRect(a, b, t, type);
+  const [x0, y0, x1, y1] = aabbOfQuad(quadOf(a, b, t));
+  const r = [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1), type];
+  r[WALL_LINE] = { a: [a.x, a.y], b: [b.x, b.y], t };
+  return r;
 }
 
 /** 点是否落在多边形内（射线法） */

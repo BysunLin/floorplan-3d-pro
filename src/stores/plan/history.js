@@ -41,6 +41,7 @@ export function createHistory(ctx){
     undoStack.push(before);
     if (undoStack.length > 150) undoStack.shift();
     redoStack.length = 0;
+    state.rev = (state.rev || 0) + 1;   // 提交版本：Worker / 报告面板按提交刷新
     savePlan(state);
     emit();
   }
@@ -80,9 +81,21 @@ export function createHistory(ctx){
     state.levelData = next.levelData || {};
     // 导入户型图的几何随快照一起还原（否则撤销后 planId 回去了、几何还是新的）
     if (next.customGeo) state.customGeo = next.customGeo;
+    // 场地（楼栋 / 道路）同样要跟着快照走，否则撤销后楼栋位置回不去
+    if (next.site && typeof next.site === 'object'){
+      const b = Array.isArray(next.site.buildings) ? next.site.buildings : [];
+      state.site = {
+        buildings: b.length ? b : [{ id: 'b0', active: true, name: '', x: 0, y: 0, rot: 0 }],
+        roads: Array.isArray(next.site.roads) ? next.site.roads : [],
+        seq: Number(next.site.seq) || 1
+      };
+      if (!state.site.buildings.some(v => v.active))
+        state.site.buildings.unshift({ id: 'b0', active: true, name: '', x: 0, y: 0, rot: 0 });
+    }
     syncUserGeom();
     lastClimbSig = climbSig();
     validateSel();
+    state.rev = (state.rev || 0) + 1;   // 撤销 / 重做也要让 Worker 报告刷新
     savePlan(state);
     emit();
   }

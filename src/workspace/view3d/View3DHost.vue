@@ -124,7 +124,7 @@ onMounted(() => {
 
   // 剖切高度 / 家具显隐 / 标签显隐
   watch(() => opt.cut, () => engine.sync());
-  watch(() => opt.furn, v => { if (engine.inited) engine.setFurn(v); });
+  watch(() => opt.furn, v => { if (engine.inited) engine.setFurn(v, true); });
   watch(() => opt.labels, v => {
     if (engine.inited) engine.showLabels(v && opt.mode === 'orbit');
   });

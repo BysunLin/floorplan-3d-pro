@@ -8,29 +8,20 @@
 
     <!-- 第二行：菜单栏（左） + 常用工具（右），两者共用同一套按钮组样式 -->
     <div class="grp menus">
-      <!-- 开始：户型 / 导入导出 / 撤销重做 -->
-      <details class="menu">
-        <summary class="btn">{{ tr('开始 ▾', 'Start ▾') }}</summary>
-        <div class="menu-pop">
-          <button class="btn" id="planBtn" @click="act(openPlan)">{{ tr('从样板间开始', 'Start from a sample') }}</button>
-          <div class="menu-sep"></div>
-          <button class="btn" @click="act(() => fileEl?.click())">{{ tr('导入方案', 'Import plan') }}</button>
-          <button class="btn" @click="act(() => imgEl?.click())"
-            :title="tr('选择户型图片，自动识别墙体与房间', 'Pick a floor plan image to detect walls and rooms')">{{ tr('导入户型图(beta)', 'Import floor plan') }}</button>
-          <button class="btn" @click="act(exportPNG)">{{ tr('导出图片', 'Export image') }}</button>
-          <button class="btn" @click="act(exportJSON)">{{ tr('导出方案 JSON', 'Export plan JSON') }}</button>
-          <div class="menu-sep"></div>
-          <button class="btn" :disabled="!canUndo" :style="{opacity: canUndo ? 1 : .4}"
-            :title="tr('撤销 (Ctrl+Z)', 'Undo (Ctrl+Z)')" @click="act(undo)">{{ tr('撤销', 'Undo') }}</button>
-          <button class="btn" :disabled="!canRedo" :style="{opacity: canRedo ? 1 : .4}"
-            :title="tr('重做 (Ctrl+Shift+Z)', 'Redo (Ctrl+Shift+Z)')" @click="act(redo)">{{ tr('重做', 'Redo') }}</button>
-        </div>
-      </details>
+      <!-- 开始：直接打开初始化界面（样板间 / 导入导出都合并到那里，不再弹下拉） -->
+      <button class="btn" id="startBtn" @click="openStart">{{ tr('开始', 'Start') }}</button>
 
-      <!-- 布局：面板 / 楼层 / 重置 / 清空 -->
+      <!-- 布局：撤销重做 / 面板 / 楼层 / 重置 / 清空 -->
       <details class="menu">
         <summary class="btn">{{ tr('布局 ▾', 'Layout ▾') }}</summary>
         <div class="menu-pop">
+          <div class="menu-row">
+            <button class="btn" :disabled="!canUndo" :style="{opacity: canUndo ? 1 : .4}"
+              :title="tr('撤销 (Ctrl+Z)', 'Undo (Ctrl+Z)')" @click="act(undo)">{{ tr('撤销', 'Undo') }}</button>
+            <button class="btn" :disabled="!canRedo" :style="{opacity: canRedo ? 1 : .4}"
+              :title="tr('重做 (Ctrl+Shift+Z)', 'Redo (Ctrl+Shift+Z)')" @click="act(redo)">{{ tr('重做', 'Redo') }}</button>
+          </div>
+          <div class="menu-sep"></div>
           <div class="menu-sec">{{ tr('面板', 'Panels') }}</div>
           <div class="menu-row">
             <button class="btn" :class="{on: paneOpen('lib')}" @click="act(() => togglePane('lib'))">
@@ -95,6 +86,14 @@
               :data-quality="q.k" :title="qualityTitle(q.k)" @click="setQuality(q.k)">
               {{ q.k === 'auto' ? `${tr('推荐', 'Auto')}·${qualityName(recQuality)}` : tr(q.name, q.en) }}
             </button>
+            <button class="btn chip" :class="{on: opt.perfHud}" data-perf-hud
+              :title="tr('在底部状态栏显示 FPS / draw call / 三角面 / 家具与实例数量', 'Show FPS / draw calls / triangles / furniture and instance counts in the status bar')"
+              @click="togglePerfHud">{{ tr('性能 HUD', 'Perf HUD') }}</button>
+          </div>
+          <div class="menu-sec only3d">{{ tr('交互 / 季节', 'Interaction / Season') }}</div>
+          <div class="menu-row only3d">
+            <button v-for="s in SEASONS" :key="s.k" class="btn chip" :class="{on: opt.season === s.k}"
+              :data-season="s.k" @click="setSeason(s.k)">{{ s.label() }}</button>
           </div>
           <div class="menu-sec only3d">{{ tr('日照', 'Sun') }}</div>
           <label class="range only3d">
@@ -254,41 +253,9 @@
       </div>
     </div>
 
-    <!-- 样板间弹窗 -->
-    <div class="plan-mask" v-if="planOpen" @click.self="planOpen = false">
-      <div class="plan-dialog dlg-plan" role="dialog" aria-modal="true" aria-labelledby="planTitle">
-        <header class="dlg-head">
-          <div class="dlg-title">
-            <h3 id="planTitle">{{ tr('从样板间开始', 'Start from a sample') }}</h3>
-            <p class="dlg-sub">{{ tr('选择一套样板间作为起点，之后可自由修改家具、墙体与楼层', 'Pick a sample as a starting point — furniture, walls and floors stay editable') }}</p>
-          </div>
-          <button class="dlg-x" :title="tr('关闭', 'Close')" :aria-label="tr('关闭', 'Close')" @click="planOpen = false">×</button>
-        </header>
-
-        <div class="dlg-body">
-          <div v-for="grp in PLAN_GROUPS" :key="grp.k" class="plan-group">
-            <h4>{{ grp.label() }}</h4>
-            <div class="plan-cards">
-              <button v-for="c in grp.cards" :key="c.id" class="plan-card" @click="pickPlan(c.id)">
-                <span class="thumb" v-html="thumb(c.id)"></span>
-                <b>{{ c.name() }}<span class="area">{{ planArea(c.id) }} m²</span></b>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- 模型总览 -->
     <ModelOverview v-if="overviewOpen" @close="overviewOpen = false"/>
-
-    <!-- 导入户型图：识别 → 预览 → 二次确认 -->
-    <ImportFloorPlanDialog v-if="importFile" :file="importFile"
-      @close="importFile = null" @apply="onImportApply"/>
     </Teleport>
-
-    <input type="file" id="fileIn" ref="fileEl" accept=".json,application/json" hidden @change="onFile">
-    <input type="file" id="imgIn" ref="imgEl" accept="image/*" hidden @change="onImage">
   </div>
 </template>
 
@@ -298,15 +265,14 @@ import { fullscreenOn as fsOn, toggleFullscreen } from '@/app/providers/useFulls
 import { storeToRefs } from 'pinia';
 import { usePlanStore, useUiStore, useViewStore } from '@/stores/index.js';
 import { setView } from '@/app/providers/useViewSwitch.js';
-import { exportProjectJSON, applyProjectDocument } from '@/app/providers/useProjectFile.js';
+import { saveProjectJSON, exportPlanPNG } from '@/app/providers/useExport.js';
 import ModelOverview from '@/shell/dialog/ModelOverview.vue';
-import ImportFloorPlanDialog from '@/shell/dialog/ImportFloorPlanDialog.vue';
 import { getEngine } from '@/workspace/view3d/registry.js';
 import { QUALITY_ITEMS, qualityTitle, qualityName, detectQuality } from '@/workspace/view3d/quality.js';
 import { tr, lang } from '@/i18n.js';
-import { BOUNDS, ROOMS } from '@/core/model/plan.js';
+import { ROOMS } from '@/core/model/plan.js';
 import { roomArea } from '@/core/geometry/region.js';
-import { makePlan, planName, planArea } from '@/core/plans/index.js';
+import { planName } from '@/core/plans/index.js';
 
 const plan = usePlanStore();
 const uiStore = useUiStore();
@@ -316,7 +282,7 @@ const { canUndo, canRedo, planId } = storeToRefs(plan);
 const { ui, opt, panes } = uiStore;
 const { is3D, drawerOpen, narrowMode } = storeToRefs(uiStore);
 const { fitView, zoomCenter, setRatio } = viewStore;
-const { undo, redo, clearLayout, resetPlan, applyPlan, addLevel, addBasement, removeLevel } = plan;
+const { undo, redo, clearLayout, resetPlan, addLevel, addBasement, removeLevel } = plan;
 const { setTool, togglePane, setLang, openAiConfig } = uiStore;
 
 /** 「推荐」档位按钮上显示当前设备建议的那一档（点击即应用它） */
@@ -358,64 +324,25 @@ const TOGGLES = [
   { k: 'roof',     label: () => tr('房顶', 'Roof') },
   { k: 'site',     label: () => tr('地面', 'Ground') },
   { k: 'night',    label: () => tr('夜景', 'Night') },
+  { k: 'holiday',  label: () => tr('节庆灯', 'Festive lights') },
 ];
+
+/* 季节皮肤：粒子系统（花瓣 / 落叶 / 雪） */
+const SEASONS = [
+  { k: 'none',   label: () => tr('无', 'None') },
+  { k: 'spring', label: () => tr('春 · 花瓣', 'Spring · petals') },
+  { k: 'autumn', label: () => tr('秋 · 落叶', 'Autumn · leaves') },
+  { k: 'winter', label: () => tr('冬 · 雪', 'Winter · snow') },
+];
+
 
 const LANGS = [
   { k: 'zh',  label: '简', t: '简体中文' },
   { k: 'en',  label: 'EN', t: 'English' },
 ];
 
-const fileEl = ref(null);
-const imgEl = ref(null);
-const importFile = ref(null);      // 待识别的户型图片（只在内存里，不落盘）
-
-/* ---------------- 户型选择 ---------------- */
-const planOpen = ref(false);
-const PLAN_GROUPS = [
-  { k: 'flat', label: () => tr('平层', 'Flat'), cards: [
-    { id: '4b2l',   name: () => tr('四室两厅', '4 Bed / 2 Living') },
-    { id: '3b2b',   name: () => tr('三室两厅', '3 Bed / 2 Living') },
-    { id: '2b1l',   name: () => tr('两室一厅', '2 Bed / 1 Living') },
-    { id: '1b1l',   name: () => tr('一室一厅', '1 Bed / 1 Living') },
-    { id: 'studio', name: () => tr('单间', 'Studio') },
-  ]},
-  { k: 'villa', label: () => tr('独栋洋房', 'Villa'), cards: [
-    { id: 'villa', name: () => tr('独栋洋房 · 三层', 'Detached Villa · 3 Floors') },
-  ]},
-  { k: 'garden', label: () => tr('花园别墅', 'Garden Villa'), cards: [
-    { id: 'garden', name: () => tr('花园别墅 · 两层', 'Garden Villa · 2 Floors') },
-  ]},
-  { k: 'loft', label: () => tr('loft', 'Loft'), cards: [
-    { id: 'loft', name: () => tr('loft 样板', 'Loft Sample') },
-  ]},
-  { k: 'mall', label: () => tr('商业', 'Commercial'), cards: [
-    { id: 'mall', name: () => tr('商场样板 · 三层', 'Mall Sample · 3 Floors') },
-  ]},
-  { k: 'custom', label: () => tr('自定义', 'Custom'), cards: [
-    { id: 'custom', name: () => tr('自定义户型', 'Custom layout') },
-  ]},
-];
-
-/* 用户型几何生成弹窗缩略图（清空布置后的样子：房间 / 区域底面 + 墙体，不含家具） */
-function thumb(id){
-  const g = makePlan(id), b = g.bounds;
-  const fillOf = r => ({ lawn: '#bcd49b', cement: '#c9c6bf', pond: '#9cc9d8', asphalt: '#5a5a5e' }[r.mat] || '#efe9dd');
-  const pathOf = r => {
-    const ring = ring => ring.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`).join('') + 'Z';
-    return `<path d="${[r.poly, ...(r.holes || [])].map(ring).join('')}" fill="${fillOf(r)}" fill-rule="evenodd"/>`;
-  };
-  const rooms = g.rooms.map(pathOf).join('');
-  const regions = (g.regions || []).map(pathOf).join('');
-  const walls = g.walls.map(([x0, y0, x1, y1, t]) =>
-    `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" fill="${t === 'b' ? '#26241f' : '#a7a195'}"/>`).join('');
-  return `<svg viewBox="${b.x} ${b.y} ${b.w} ${b.h}" preserveAspectRatio="xMidYMid meet">`
-    + `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="#f7f4ee"/>${regions}${rooms}${walls}</svg>`;
-}
-
-function pickPlan(id){
-  planOpen.value = false;
-  applyPlan(id, { confirmMsg: false });
-}
+/* ---------------- 户型选择（统一在初始化界面里做） ---------------- */
+function openStart(){ uiStore.openStart(); }
 
 /* ---------------- 派生值 ---------------- */
 const brandTitle = computed(() => `${planName(planId.value, lang.value)} · ${tr('装修设计', 'Interior Design')}`);
@@ -441,8 +368,6 @@ function paneOpen(k){
 const helpOpen = ref(false);
 const overviewOpen = ref(false);
 const aboutOpen = ref(false);
-
-function openPlan(){ planOpen.value = true; }
 
 /** 执行菜单项前先收起所有下拉菜单 */
 function closeMenus(){ document.querySelectorAll('details.menu').forEach(d => { d.open = false; }); }
@@ -487,9 +412,21 @@ function toggle3d(k){
   if (k === 'allFloors') getEngine()?.sync(true);
   if (k === 'roof') getEngine()?.sync();       // 房顶整体重建（只影响顶层体量）
   if (k === 'site') getEngine()?.sync();       // 场地（大地面 / 地下层土体）重建
+  if (k === 'holiday') getEngine()?.applyHoliday();
+}
+
+/** 季节皮肤：切换粒子系统（与几何无关，不需要重建场景） */
+function setSeason(k){
+  opt.season = k;
+  getEngine()?.applySeason();
 }
 
 function onSun(e){ opt.hour = +e.target.value; getEngine()?.applyLight(); }
+
+/** 底部性能 HUD：引擎每 ~500ms 采样，开关只改显隐 */
+function togglePerfHud(){
+  opt.perfHud = !opt.perfHud;
+}
 
 /** 画质档位（性能）：像素比 / 阴影 / 灯光数量 / 环境反射立即生效（抗锯齿需重进 3D）
  *  「推荐」不是一个独立档位：按当前设备在低 / 中 / 高里挑一个直接用 */
@@ -519,86 +456,18 @@ function onTop(){
   e.flyTo(e.topWhole());
 }
 
-/* ---------------- 导入导出 ---------------- */
-function download(name, blob){
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-
+/* ---------------- 导出（导入 / 导出统一在初始化界面里做） ---------------- */
 function exportPNG(){
   if (is3D.value){ getEngine()?.shot(); return; }
-  const svg = document.querySelector('#plan');
-  if (!svg) return;
-  const clone = svg.cloneNode(true), W = 3200, H = Math.round(W*BOUNDS.h/BOUNDS.w);
-  clone.setAttribute('viewBox', `${BOUNDS.x} ${BOUNDS.y} ${BOUNDS.w} ${BOUNDS.h}`);
-  clone.setAttribute('width', W);
-  clone.setAttribute('height', H);
-  const selEl = clone.querySelector('#gSel');
-  if (selEl) selEl.innerHTML = '';
-  const gridEl = clone.querySelector('#gGrid');
-  if (gridEl){
-    gridEl.innerHTML = `<rect x="-20000" y="-20000" width="55000" height="55000" fill="${ui.layers.grid ? 'url(#grid)' : '#f7f4ee'}"/>`;
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    Object.entries({ x: -20000, y: -20000, width: 55000, height: 55000, fill: '#f7f4ee' })
-      .forEach(([k, v]) => bg.setAttribute(k, v));
-    clone.insertBefore(bg, gridEl);
-  }
-  const img = new Image();
-  img.onload = () => {
-    const cv = document.createElement('canvas');
-    cv.width = W; cv.height = H;
-    cv.getContext('2d').drawImage(img, 0, 0, W, H);
-    cv.toBlob(b => download(tr('户型装修方案', 'floor-plan-design') + '.png', b));
-  };
-  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone));
+  exportPlanPNG();
 }
 
 function exportJSON(){
   try {
-    const { name, text } = exportProjectJSON();
-    download(name, new Blob([text], { type: 'application/json' }));
+    saveProjectJSON();
     uiStore.showToast(tr('已导出方案（楼层 / 家具 / 区域 / 墙体）', 'Project exported (floors, furniture, areas, walls)'));
   } catch (err){
     uiStore.showToast(tr('导出失败：', 'Export failed: ') + (err?.message || ''));
-  }
-}
-
-async function onFile(e){
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file) return;
-  try {
-    const txt = await file.text();
-    const { legacy } = applyProjectDocument(JSON.parse(txt));
-    uiStore.showToast(legacy
-      ? tr('已导入（旧版文件）', 'Imported (legacy file)')
-      : tr('已导入方案', 'Project imported'));
-  } catch (err){
-    uiStore.showToast(tr('导入失败：', 'Import failed: ') + (err?.message || tr('文件格式不正确', 'invalid file')));
-  }
-}
-
-/* ---------------- 导入户型图（图片 → 可编辑平面） ---------------- */
-function onImage(e){
-  const file = e.target.files[0];
-  e.target.value = '';                 // 允许重复选择同一张图
-  if (!file) return;
-  if (!/^image\//.test(file.type))
-    return uiStore.showToast(tr('请选择图片文件（PNG / JPG）', 'Please pick an image file (PNG / JPG)'));
-  importFile.value = file;             // 交给弹窗去识别 + 二次确认
-}
-
-function onImportApply({ geo, meta }){
-  importFile.value = null;
-  try {
-    plan.applyImportedGeo(geo, meta);
-    if (is3D.value) setView('2d');     // 导入结果就是平面图，直接切回 2D
-    fitView();
-  } catch (err){
-    uiStore.showToast(tr('导入失败：', 'Import failed: ') + (err?.message || ''));
   }
 }
 </script>

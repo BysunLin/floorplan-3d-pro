@@ -64,7 +64,8 @@ const props = defineProps({
   i:    { type: Number, required: true }
 });
 
-const KEY  = computed(() => ({ wall: 'w', win: 'nw', door: 'nd', slide: 'ns' }[props.kind] + props.i));
+// 名称按元素 uid 存（下标会随开洞 / 合并变化），所以键要由 store 给
+const KEY  = computed(() => plan.elemKey(props.kind, props.i));
 const size = computed(() => elemSize(props.kind, props.i));
 const name = computed(() => elemName(props.kind, props.i));
 const areaText = computed(() => size.value ? (size.value.w*size.value.d/1e6).toFixed(3) + ' m²' : '—');

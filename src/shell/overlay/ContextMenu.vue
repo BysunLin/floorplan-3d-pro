@@ -29,10 +29,10 @@ const uiStore = useUiStore();
 const viewStore = useViewStore();
 const {
   state, getF, deleteElem, deleteRoom,
-  rotateSel, duplicateSel, deleteSel, elemName, setFloorDir,
+  rotateSel, duplicateSel, deleteSel, elemName, setFloorDir, autoParking,
   convertWallTo, convertWallFromBearing, isOuterWall
 } = plan;
-const { ui, select, drawer, closeMenu } = uiStore;
+const { ui, select, drawer, closeMenu, showToast } = uiStore;
 
 const el = ref(null);
 const pos = ref({ x: 0, y: 0 });
@@ -82,6 +82,7 @@ const items = computed(() => {
   }
   if (r.value){
     out.push({ ico: '⚙', label: tr('地面 / 属性', 'Floor / Properties'), act: 'props' });
+    out.push({ ico: 'P', label: tr('自动排车位', 'Auto parking layout'), act: 'garage' });
     if (!isBay.value)
       out.push({ ico: '✕', label: isRegion.value ? tr('删除区域', 'Delete area') : tr('删除房间', 'Delete room'), act: 'delroom', danger: true });
     return out;
@@ -105,6 +106,14 @@ function run(it){
                     else if (elem.value) deleteElem(elem.value.kind, elem.value.i);
                     break;
     case 'delroom': if (sel?.kind === 'room') deleteRoom(sel.id); break;
+    case 'garage': {
+      if (sel?.kind !== 'room') break;
+      const res = autoParking(sel.id);
+      if (!res.ok) showToast(res.reason === 'small'
+        ? tr('区域太小：自动排车位至少需要 14×14 m', 'Area too small — auto layout needs at least 14×14 m')
+        : tr('区域内放不下完整车位', 'No full stall fits inside the area'));
+      break;
+    }
     case 'bearing': if (elem.value?.kind === 'wall'){ convertWallTo(elem.value.i, 'b'); select(null); } break;
     case 'partition': if (elem.value?.kind === 'wall'){ convertWallFromBearing(elem.value.i); select(null); } break;
   }

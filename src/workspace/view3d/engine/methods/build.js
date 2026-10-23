@@ -3,8 +3,12 @@ import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { ROOMS, WALLS, WINS, DOORS, SLIDES, LINTELS, esc } from '@/core/model/plan.js';
 import { areaOf, roomArea, shapePieces, pointInShape, bboxOf } from '@/core/geometry/region.js';
 import { tr, nm } from '@/i18n.js';
-import { mat, buildFurniture, floorMat, waterMat, box, cyl } from '@/workspace/view3d/build/index.js';
+import { mat, buildFurniture, floorMat, waterMat, box, cyl, bakeGroup } from '@/workspace/view3d/build/index.js';
+import { buildWallSolid } from '@/workspace/view3d/build/wallSolid.js';
 import { wallMat, isGlassMat, DEFAULT_WALL_MAT } from '@/core/library/wallMats.js';
+import { wallRuns, runRect } from '@/core/nodes/derive.js';
+import { isSlantedWall } from '@/core/model/wallLine.js';
+import { graphFromLegacy } from '@/core/nodes/legacy.js';
 import { H, wx, wz, M } from '@/workspace/view3d/coords.js';
 import { DOOR_H, slideHead, DOOR_CASE, ceilLampGeo, CLIMB, CLIMB_TYPES, NO_OPENING_TYPES } from '../constants.js';
 
@@ -19,6 +23,22 @@ import { DOOR_H, slideHead, DOOR_CASE, ceilLampGeo, CLIMB, CLIMB_TYPES, NO_OPENI
 const LV_SEAM = .012;
 const LV_OVERLAP = .03;
 const CEIL_GAP = .028;
+
+/* 节点级整段墙（Shape 带洞 + 一次挤出）。
+ * 出问题时可改成 false，立刻回退到原来的「盒子分段 + 过梁拼补」路径。 */
+const USE_SOLID_WALLS = true;
+
+/* 高频重复构件：同型同色同尺寸达到阈值后改走 InstancedMesh。
+ * 树 / 灌木 / 车是沙盘里最容易被复制上百次的一类，逐件 Group 会让 draw call 线性上涨。 */
+const INST_TYPES = new Set([
+  'ginkgo', 'cherry', 'osmanthus', 'camphor', 'zelkova', 'tallow', 'palm', 'bamboo',
+  'shrub', 'car', 'suv', 'mpv'
+]);
+const INST_MIN = 6;
+const TREE_TYPES = new Set([
+  'ginkgo', 'cherry', 'osmanthus', 'camphor', 'zelkova', 'tallow', 'palm', 'bamboo',
+  'treegrid', 'streetrow'
+]);
 
 /* View3D.prototype 的方法组：由 engine.js 统一挂载 */
 export const buildMethods = {
@@ -166,6 +186,67 @@ export const buildMethods = {
       sk.visible = this.uiStore.opt.mode === 'walk';
       this.archUp.add(sk);
     }
+  },
+
+  /* ======================= 节点级墙体（整段 + 真洞口） =======================
+   * 由 core/nodes/derive.js 把「被门窗切开的墙段」重新合并成整段墙，
+   * 每段墙只生成 1 个挤出体（立面轮廓带洞），因此：
+   *   · 不再需要「左墙 + 右墙 + 过梁」三段拼补，墙面 / 墙顶连续无拼缝；
+   *   · 洞口是真的洞，窗台墙 / 窗上墙由墙体自身提供，不单独补盒子；
+   *   · 同一面墙签名不变时直接复用 mesh —— 改家具 / 改地面不会重建墙体。
+   * 玻璃墙（裸玻璃或玻璃材质）仍走原来的盒子 + 铝框路径。 */
+  syncWalls(runs, { top, levelH, alpha } = {}){
+    const group = this.wallG;
+    if (!group) return;
+    const live = new Set();
+    const walk = this.uiStore.opt.mode === 'walk';
+
+    for (const run of runs){
+      const rect = runRect(run);
+      const seeThrough = !!alpha && this.outerWallOf(rect, ROOMS);
+      const first = run.wallIds[0];
+      const matId = this.plan.wallMatId?.(first) || DEFAULT_WALL_MAT;
+      const yt = run.low ? Math.min(1, top) : top;
+      // 斜墙没有 span/c 这一维身份，几何签名必须带上中心线（否则改角度不重建）
+      const sig = JSON.stringify([run.span, run.c, run.line, run.deg, run.thickness, run.holes, matId, yt, walk, seeThrough]);
+
+      live.add(run.id);
+      const cur = this.wallCache.get(run.id);
+      if (cur && cur.sig === sig){
+        group.add(cur.group);                    // 签名未变：直接复用，不再三角化
+      } else {
+        if (cur){ this.disposeGroup(cur.group); this.wallCache.delete(run.id); }
+        const face = this.wallFaceMat(first);
+        const wallMaterial = seeThrough ? this.wallAlphaMat : (Array.isArray(face) ? face[0] : (face || this.wallMat));
+        const g = buildWallSolid(run, {
+          yb: -LV_OVERLAP, yt, wallMat: wallMaterial, capMat: this.capMat,
+          alpha: seeThrough, walk, edgeMat: this.edgeMat
+        });
+        if (g){
+          group.add(g);
+          this.wallCache.set(run.id, { sig, group: g });
+        }
+      }
+
+      // 上方是夹层挑空：外墙通高到夹层顶（双层高空间）。
+      // 这段走 archUp，每次 buildArch 都会清空，所以不能放进缓存分支里。
+      if (this.isLoftAbove && run.kind === 'e')
+        this.wallBox(rect, top - LV_OVERLAP, levelH + this.loftClearH, seeThrough ? this.wallAlphaMat : undefined);
+    }
+
+    // 已经不存在的墙：回收几何（材质是共享的，不能 dispose）
+    for (const [id, cur] of [...this.wallCache]){
+      if (live.has(id)) continue;
+      this.disposeGroup(cur.group);
+      this.wallCache.delete(id);
+    }
+  },
+
+  /** 只释放几何，不动共享材质 */
+  disposeGroup(g){
+    if (!g) return;
+    g.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    g.removeFromParent();
   },
 
   /**
@@ -682,8 +763,38 @@ export const buildMethods = {
     // 墙体 + 碰撞体（玻璃墙面用通透的铝框 + 玻璃模型）
     // 「半透明」模式：只把围护外墙换成半透明材质，内隔墙保持实心（漫游时不做）
     const alpha = this.uiStore.opt.wallAlpha && this.uiStore.opt.mode !== 'walk';
+
+    /* 节点级墙体：由当前层节点图推导「整段墙 + 真实洞口」，每段墙只生成一个挤出体。
+     * 玻璃墙 / 玻璃材质墙保持原路径（需要铝框 + 竖梃的通透感）。 */
+    const graph = this.plan.getGraph?.({ withContent: false });
+    const allRuns = graph ? wallRuns(graph) : [];
+    const solidRuns = USE_SOLID_WALLS
+      ? allRuns.filter(r => !r.wallIds.some(i => !WALLS[i] || this.wallIsGlass(WALLS[i], i)))
+      : [];
+    const solidIdx = new Set();
+    const covered = new Set();                    // 已由整段墙负责的洞口：旧路径不再补过梁 / 窗台墙
+    for (const r of solidRuns){
+      for (const i of r.wallIds) solidIdx.add(i);
+      for (const k of r.openingKeys) covered.add(k);
+    }
+    this.syncWalls(solidRuns, { top, levelH, alpha });
+
+    const inSolidRun = rect => solidRuns.some(run => {
+      // 斜墙的 runRect 是 AABB，会把包围盒里的正交墙 / 洞口误判成「已被整段墙覆盖」
+      if (run.axis === 's') return false;
+      const b = runRect(run);
+      return rect[0] >= b[0] - 2 && rect[2] <= b[2] + 2
+        && rect[1] >= b[1] - 2 && rect[3] <= b[3] + 2;
+    });
+
     WALLS.forEach((w, i) => {
       if (this.plan.state.demolished.includes('w' + i)) return;
+      // 碰撞体与渲染方式无关：整段墙同样要挡人。
+      // 斜墙的 AABB 明显大于真实墙体，做成碰撞盒会凭空挡住一大片空间，
+      // 宁可暂时不挡人（碰撞走 OBB 见后续阶段）。
+      if (!isSlantedWall(w)) this.colliders.push([wx(w[0]), wz(w[1]), wx(w[2]), wz(w[3]),
+        this.activeElev, this.activeElev + levelH]);
+      if (solidIdx.has(i)) return;               // 已由 syncWalls 整段渲染
       const glass = this.wallIsGlass(w, i);
       const seeThrough = alpha && !glass && this.outerWallOf(w, ROOMS);
       // 旧存档的 'g' 玻璃墙面：整片纯玻璃；材质选了玻璃：铝框 + 玻璃隔断
@@ -693,27 +804,28 @@ export const buildMethods = {
       // 上方是夹层挑空：外墙通高到夹层顶（双层高空间）
       if (this.isLoftAbove && w[4] === 'e')
         this.wallBox(w, top - LV_OVERLAP, levelH + this.loftClearH, seeThrough ? this.wallAlphaMat : undefined);
-      this.colliders.push([wx(w[0]), wz(w[1]), wx(w[2]), wz(w[3]),
-        this.activeElev, this.activeElev + levelH]);
     });
 
-    // 非首层（含地下层）：入户门洞口补墙（入户门只属于一层）
+    // 非首层（含地下层）：入户门洞口补墙（入户门只属于一层；整段墙已填实则跳过）
     if (Math.abs(this.activeElev) > 0.01){
       DOORS.forEach((d, i) => {
         if (!d.entry || this.plan.state.demolished.includes('nd' + i)) return;
+        if (covered.has('nd' + i)) return;
         this.wallBox(d.rect, -LV_OVERLAP, top);
         this.colliders.push([wx(d.rect[0]), wz(d.rect[1]), wx(d.rect[2]), wz(d.rect[3]),
           this.activeElev, this.activeElev + levelH]);
       });
     }
 
-    // 门洞、飘窗洞口上方过梁（已删除的门窗不生成；飘窗过梁随户型几何切换）
+    // 门洞、飘窗洞口上方过梁（已删除 / 已并入整段墙的洞口不再补）
     [
       ...DOORS.map((d, i) => [d.rect, DOOR_H, i, 'nd']),
       ...SLIDES.map((s, i) => [s.rect, slideHead(s), i, 'ns']),
       ...LINTELS.map(([r, h]) => [r, h, -1, null])
     ].forEach(([r, h, i, pfx]) => {
       if (i >= 0 && gone(pfx, i)) return;
+      if (i >= 0 && covered.has(pfx + i)) return;
+      if (i < 0 && inSolidRun(r)) return;         // 飘窗过梁已并入整段墙
       if (top <= h) return;
       // 两侧都是玻璃墙的门窗：洞口上方补玻璃（与墙面铝框 / 玻璃同厚对齐），而不是实体墙过梁
       const gt = pfx === 'nd' ? this.glassDoors.get(i) : pfx === 'ns' ? this.glassSlides.get(i) : 0;
@@ -721,14 +833,16 @@ export const buildMethods = {
       else this.wallBox(r, h, top);
     });
 
-    // 窗：窗台墙 + 窗上墙 + 玻璃 + 窗框（半透明模式下窗台墙 / 窗上墙同样透）
+    // 窗：整段墙已经开出洞口 → 只补玻璃 + 窗框；未并入整段墙的窗仍按窗台墙 / 窗上墙处理
     WINS.forEach((r, i) => {
       if (gone('nw', i)) return;
       const sill = i === 0 ? 1.4 : i >= 6 ? .45 : .9, head = 2.4;
       const seeThrough = alpha && this.outerWallOf(r, ROOMS);
       const wm = seeThrough ? this.wallAlphaMat : undefined;
-      this.wallBox(r, -LV_OVERLAP, Math.min(sill, top), wm);
-      if (top > head) this.wallBox(r, head, top, wm);
+      if (!covered.has('nw' + i)){
+        this.wallBox(r, -LV_OVERLAP, Math.min(sill, top), wm);
+        if (top > head) this.wallBox(r, head, top, wm);
+      }
       this.colliders.push([wx(r[0]), wz(r[1]), wx(r[2]), wz(r[3]),
         this.activeElev, this.activeElev + levelH]);
       this.windowGlass(r, i, top, this.archUp);
@@ -969,10 +1083,14 @@ export const buildMethods = {
   },
 
   /** 家具显隐：只切可见性 + 重绘一次。阴影贴图是手动更新的，必须一并标记，否则会留下残影 */
-  setFurn(v){
+  setFurn(v, animate = false){
     const show = !!v || this.uiStore.opt.mode === 'walk';
+    const was = this.furnG.visible;
     this.furnG.visible = show;
+    if (this.instG) this.instG.visible = show;
     for (const g of this.ghostFurnG || []) g.visible = show;
+    // 只有「从隐藏切到显示」才播放弹性入场；重建 / 整栋刷新不触发
+    if (animate && show && !was) this.startFurnDrop();
     this.renderer.shadowMap.needsUpdate = true;
     this.needsRender = true;
   },
@@ -1017,8 +1135,49 @@ export const buildMethods = {
       }
     }
     const alpha = !!this.uiStore.opt.wallAlpha && !walk;
+
+    /* 其它楼层的墙也走同一套节点推导（整段墙 + 真洞口），
+     * 不再复制一份「盒子 + 窗台墙 + 过梁」的拼补逻辑：
+     * 一层有斜接、无拼缝，整栋视图里的其它楼层同样有。 */
+    const ghostGraph = graphFromLegacy({
+      level: s.level, walls: s.walls, wins: s.wins || [], doors: s.doors || [],
+      slides: s.slides || [], rooms: s.rooms, wallMats: s.wallMats || {},
+      demolished: s.demolished || []
+    });
+    const ghostRuns = wallRuns(ghostGraph);
+    const solidRuns = ghostRuns.filter(r => !r.wallIds.some(i => {
+      const w = s.walls[i];
+      return !w || w[4] === 'g' || isGlassMat(s.wallMats?.['w' + i]);
+    }));
+    const solidIdx = new Set(solidRuns.flatMap(r => r.wallIds));
+    const covered = new Set(solidRuns.flatMap(r => r.openingKeys));
+
+    for (const run of solidRuns){
+      const rect = runRect(run);
+      const seeThrough = alpha && full && this.outerWallOf(rect, s.rooms);
+      const mid = s.wallMats?.['w' + run.wallIds[0]];
+      const m = full
+        ? (seeThrough ? this.wallAlphaMat
+          : mid ? mat(wallMat(mid).color, { roughness: wallMat(mid).rough, metalness: wallMat(mid).metal || 0 })
+          : this.wallMat)
+        : ghost;
+      const solid = full && !seeThrough;
+      const hh = run.low ? Math.min(1, top) : top;
+      if (hh <= .001) continue;
+      // 墙根下探 LV_OVERLAP：压住下层墙顶（下层墙顶已退让 LV_SEAM），层间不会出现细缝
+      // 其它楼层只作空间参照：不加墙顶压顶（保持原来「整栋」视图的观感）
+      const grp = buildWallSolid(run, {
+        yb: -LV_OVERLAP, yt: hh, wallMat: m, capMat: null, alpha: !solid
+      });
+      if (grp) g.add(grp);
+      if (full){
+        this.colliders.push([wx(rect[0]), wz(rect[1]), wx(rect[2]), wz(rect[3]), elev, elev + hh]);
+      }
+    }
+
     s.walls.forEach((w, i) => {
       if (s.demolished.includes('w' + i)) return;
+      if (solidIdx.has(i)) return;                 // 已由整段墙渲染
       const [x0, y0, x1, y1] = w;
       const hh = w[4] === 'low' ? Math.min(1, top) : top;
       if (hh <= .001) return;
@@ -1031,7 +1190,6 @@ export const buildMethods = {
           : mid ? mat(wallMat(mid).color, { roughness: wallMat(mid).rough, metalness: wallMat(mid).metal || 0 })
           : this.wallMat)
         : ghost;
-      // 墙根下探 LV_OVERLAP：压住下层墙顶（下层墙顶已退让 LV_SEAM），层间不会出现细缝
       const nb = new THREE.Mesh(new THREE.BoxGeometry(M(x1 - x0), hh + LV_OVERLAP, M(y1 - y0)), m);
       nb.position.set(wx((x0 + x1)/2), (hh - LV_OVERLAP)/2, wz((y0 + y1)/2));
       const solid = full && !seeThrough && !glass;
@@ -1047,10 +1205,12 @@ export const buildMethods = {
         if (s.demolished.includes('nw' + i)) return;
         const sill = i === 0 ? 1.4 : i >= 6 ? .45 : .9, head = 2.4;
         const wm = (alpha && this.outerWallOf(r, s.rooms)) ? this.wallAlphaMat : this.wallMat;
-        const low = this.blockBox(r, -LV_OVERLAP, Math.min(sill, top), wm);
-        if (low) g.add(low);
-        const up = this.blockBox(r, head, top, wm);
-        if (up) g.add(up);
+        if (!covered.has('nw' + i)){                // 整段墙已开洞时不再补窗台墙 / 窗上墙
+          const low = this.blockBox(r, -LV_OVERLAP, Math.min(sill, top), wm);
+          if (low) g.add(low);
+          const up = this.blockBox(r, head, top, wm);
+          if (up) g.add(up);
+        }
         this.windowGlass(r, i, top, g);
         this.colliders.push([wx(r[0]), wz(r[1]), wx(r[2]), wz(r[3]), elev, elev + top]);
       });
@@ -1060,10 +1220,12 @@ export const buildMethods = {
       (s.doors || []).forEach((d, i) => {
         if (s.demolished.includes('nd' + i)) return;
         if (d.entry && Math.abs(elev) > .01){
-          const wm = (alpha && this.outerWallOf(d.rect, s.rooms)) ? this.wallAlphaMat : this.wallMat;
-          const b = this.blockBox(d.rect, -LV_OVERLAP, top, wm);
-          if (b) g.add(b);
-          this.colliders.push([wx(d.rect[0]), wz(d.rect[1]), wx(d.rect[2]), wz(d.rect[3]), elev, elev + top]);
+          if (!covered.has('nd' + i)){              // 整段墙已填实则不再补墙
+            const wm = (alpha && this.outerWallOf(d.rect, s.rooms)) ? this.wallAlphaMat : this.wallMat;
+            const b = this.blockBox(d.rect, -LV_OVERLAP, top, wm);
+            if (b) g.add(b);
+            this.colliders.push([wx(d.rect[0]), wz(d.rect[1]), wx(d.rect[2]), wz(d.rect[3]), elev, elev + top]);
+          }
           return;
         }
         for (const leaf of this.ghostDoorLeaf(d, top)) g.add(leaf);
@@ -1090,6 +1252,10 @@ export const buildMethods = {
       if (fg.children.length){
         // 其它楼层的家具只作参照：不投影，减少阴影贴图开销（切显隐也更跟手）
         fg.traverse(o => { if (o.isMesh) o.castShadow = false; });
+        /* 拾取只发生在当前层，其它楼层不需要逐件保留：
+         * 整层 258 件家具（约 7000 个 Mesh）在这里合并成「每种材质一个 Mesh」，
+         * 是「整栋」视图 draw call 的主要来源之一。 */
+        bakeGroup(fg);
         g.add(fg);
         (this.ghostFurnG = this.ghostFurnG || []).push(fg);
       }
@@ -1364,11 +1530,30 @@ export const buildMethods = {
 
   buildFurn(){
     this.clearGroup(this.furnG);
+    this.clearGroup(this.instG);
+    this.instMap.clear();
+    this.fx.length = 0;
+    this.selTemp = null;
+    this.selInst = null;
+    this.dropFx = null;                        // 重建后旧动画引用失效
     const st = this.plan.state;
     const cur = this.plan.activeLevelMeta?.()?.elev || 0;
+
+    // 同型构件分组：达到阈值的走实例化，其余逐件建模
+    const instGroups = new Map();
+    const normal = [];
     for (const f of st.furniture){
-      // 楼梯 / 扶梯按「目标层 - 本层」的标高差建模，loft 等不等层高也能对齐
-      this.furnG.add(buildFurniture(f, CLIMB[f.type] ? this.stairRise(f) : undefined));
+      if (this.uiStore.opt.instancing && INST_TYPES.has(f.type)){
+        const key = `${f.type}|${f.color || ''}|${f.w}|${f.d}`;
+        const arr = instGroups.get(key);
+        if (arr) arr.push(f); else instGroups.set(key, [f]);
+      } else normal.push(f);
+    }
+    const emitNormal = f => this.furnG.add(buildFurniture(f, CLIMB[f.type] ? this.stairRise(f) : undefined));
+    for (const f of normal) emitNormal(f);
+    for (const items of instGroups.values()){
+      if (items.length >= INST_MIN && this.addInstances(items)) continue;
+      for (const f of items) emitNormal(f);
     }
     // 正下方一层的「上行楼梯」：夹层 / 上层同样要显示（楼梯穿过楼板洞口上来）。
     // 整栋（allFloors）/ 漫游时各层楼梯由 buildGhosts 在自己的楼层里逐层渲染，
@@ -1393,9 +1578,84 @@ export const buildMethods = {
     }
     // 漫游时家具（尤其楼梯）必须可见，否则脚下是空的
     this.furnG.visible = this.uiStore.opt.furn || this.uiStore.opt.mode === 'walk';
+    this.instG.visible = this.furnG.visible;
     this.selKey = null;
+    this.collectFx();
+    this.applyHoliday();
     this.applyGrow();
+    this.renderer.shadowMap.needsUpdate = true;
     this.needsRender = true;
+  },
+
+  /**
+   * 同型构件实例化：用一件模板（已按材质烘焙）建 InstancedMesh，
+   * 每个实例只存一个矩阵，draw call 不再随数量增长。
+   * 返回 false 表示模板不适合实例化（例如包含动画子组），调用方回退逐件建模。
+   */
+  addInstances(items){
+    const sample = items[0];
+    const tpl = buildFurniture({ ...sample, id: '__tpl', cx: 0, cy: 0, rot: 0 });
+    if (!tpl || !tpl.children.length) return false;
+    const layers = tpl.children.filter(o => o.isMesh);
+    if (!layers.length || layers.length !== tpl.children.length) return false;
+
+    const insts = layers.map(m => {
+      const im = new THREE.InstancedMesh(m.geometry, m.material, items.length);
+      im.castShadow = m.castShadow;
+      im.receiveShadow = m.receiveShadow;
+      im.userData.fids = new Array(items.length);
+      return im;
+    });
+    const P = new THREE.Vector3(), Q = new THREE.Quaternion(), E = new THREE.Euler(), S = new THREE.Vector3(1, 1, 1);
+    const m4 = new THREE.Matrix4();
+    items.forEach((f, i) => {
+      E.set(0, -f.rot*Math.PI/180, 0);
+      Q.setFromEuler(E);
+      P.set(wx(f.cx), 0, wz(f.cy));
+      m4.compose(P, Q, S);
+      for (const im of insts){
+        im.setMatrixAt(i, m4);
+        im.userData.fids[i] = f.id;
+      }
+      this.instMap.set(f.id, { entries: insts.map(im => ({ mesh: im, index: i })), m: m4.clone() });
+    });
+    for (const im of insts){
+      im.instanceMatrix.needsUpdate = true;
+      im.computeBoundingSphere?.();
+      this.instG.add(im);
+    }
+    return true;
+  },
+
+  /** 收集可交互动画件（道闸 / 大门 / 水柱），并把当前开合状态套回去 */
+  collectFx(){
+    this.fx.length = 0;
+    for (const root of this.furnG.children){
+      const fid = root.userData.fid;
+      if (!fid) continue;
+      root.traverse(o => {
+        const fx = o.userData.fx;
+        if (!fx) return;
+        const target = this.fxState[fid] ?? 0;
+        fx.fid = fid;
+        fx.target = target;
+        if (fx.kind === 'barrier') o.rotation.y = target ? fx.openAngle : 0;
+        if (fx.kind === 'gate') o.position.x = target ? fx.open : fx.closed;
+        this.fx.push({ obj: o, fx });
+      });
+    }
+  },
+
+  /** 点击道闸 / 大门：切换开合（返回 true 表示已处理，不再走选中逻辑） */
+  toggleAsset(fid){
+    const list = this.fx.filter(x => x.fx.fid === fid);
+    if (!list.length) return false;
+    const on = !(this.fxState[fid] ?? 0);
+    this.fxState[fid] = on ? 1 : 0;
+    for (const x of list) x.fx.target = on ? 1 : 0;
+    this.uiStore.showToast(tr(on ? '已开启' : '已关闭', on ? 'Opened' : 'Closed'));
+    this.needsRender = true;
+    return true;
   },
 
   /** 楼梯连到相邻楼层的高差（米，正数）；无相邻层时回退到默认层高 H */

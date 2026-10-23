@@ -17,6 +17,14 @@
             <button v-if="q" class="mg-clear" :title="tr('清除', 'Clear')" @click="q = ''">×</button>
           </div>
 
+          <!-- 分类页签：全部 / 室内 / 户外 / 商业（搜索时在当前页签内查找） -->
+          <div class="mg-tabs" role="tablist">
+            <button v-for="t in TABS" :key="t.id"
+              class="mg-tab" :class="{ on: tab === t.id }"
+              :aria-selected="tab === t.id" role="tab"
+              @click="tab = t.id">{{ tr(t.name, t.en) }}</button>
+          </div>
+
           <div class="mg-list">
             <template v-for="g in groups" :key="g.cat">
               <h4>{{ nm(g.cat) }}</h4>
@@ -67,6 +75,15 @@ const showBox = ref(false);
 const showDims = ref(true);
 const spin = ref(true);
 
+/* 模型总览的分类页签：全部之外按家具库 scope 归类（home=室内 / out=户外 / biz=商业） */
+const TABS = [
+  { id: 'all',  name: '全部', en: 'All' },
+  { id: 'home', name: '室内', en: 'Indoor' },
+  { id: 'out',  name: '户外', en: 'Outdoor' },
+  { id: 'biz',  name: '商业', en: 'Commercial' }
+];
+const tab = ref('all');
+
 /* 选中项用「稳定 key」比较：家具库条目是数组，身份比较在模板里不可靠 */
 const keyOf = it => (it ? `${it[0]}|${it[1]}|${it[2]}|${it[3]}` : '');
 
@@ -76,14 +93,16 @@ const selKey = ref(keyOf(sel.value));
 
 const groups = computed(() => {
   const kw = q.value.trim().toLowerCase();
-  if (!kw) return LIB.map(g => ({ cat: g.cat, items: g.items }));
   return LIB
+    .filter(g => tab.value === 'all' || (g.scope || 'home') === tab.value)
     .map(g => ({
       cat: g.cat,
-      items: g.items.filter(it =>
-        nm(it[1]).toLowerCase().includes(kw)
-        || String(it[1]).toLowerCase().includes(kw)
-        || String(it[0]).toLowerCase().includes(kw))
+      items: kw
+        ? g.items.filter(it =>
+          nm(it[1]).toLowerCase().includes(kw)
+          || String(it[1]).toLowerCase().includes(kw)
+          || String(it[0]).toLowerCase().includes(kw))
+        : g.items
     }))
     .filter(g => g.items.length);
 });

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { DOORS } from '@/core/model/plan.js';
 import { pointInShape } from '@/core/geometry/region.js';
-import { mat } from '@/workspace/view3d/build/index.js';
+import { mat, buildFurniture } from '@/workspace/view3d/build/index.js';
 import { OX, OY, wx, wz } from '@/workspace/view3d/coords.js';
 import { FOCUS_Y, EYE_H, CLIMB } from '../constants.js';
 
@@ -14,10 +14,17 @@ export const walkMethods = {
       this.ptr.set((e.clientX - r.left)/r.width*2 - 1, -(e.clientY - r.top)/r.height*2 + 1);
     }
     this.ray.setFromCamera(this.ptr, this.camera);
-    const hits = this.ray.intersectObjects([...(this.uiStore.opt.furn ? [this.furnG] : []), this.archUp, this.archFloor], true);
+    const bag = this.uiStore.opt.furn ? [this.furnG, this.instG] : [];
+    const hits = this.ray.intersectObjects([...bag, this.archUp, this.archFloor], true);
     for (const h of hits){
       let o = h.object;
       if (o.material === this.glassMat) continue;
+      // InstancedMesh：instanceId → 家具 id（树木 / 车辆批量实例化后仍可点选）
+      if (o.isInstancedMesh && o.userData.fids){
+        const fid = o.userData.fids[h.instanceId];
+        if (fid) return { fid };
+        continue;
+      }
       if (o.userData.room) return { room: o.userData.room };
       // 门扇 / 家具都是「组」，需要沿父级向上找归属
       while (o && !o.userData.door && !o.userData.fid && !o.userData.lowerFloor && o !== this.scene) o = o.parent;
@@ -61,7 +68,36 @@ export const walkMethods = {
         this.selHelper.geometry.dispose();
         this.selHelper = null;
       }
-      const g = key && this.furnG.children.find(o => o.userData.fid === key);
+      // 取消上一个「实例临时实体化」：恢复实例矩阵、删掉临时 Group
+      if (this.selInst){
+        for (const e of this.selInst.entries){
+          e.mesh.setMatrixAt(e.index, this.selInst.m);
+          e.mesh.instanceMatrix.needsUpdate = true;
+        }
+        this.selInst = null;
+      }
+      if (this.selTemp){
+        this.selTemp.removeFromParent();
+        this.selTemp.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+        this.selTemp = null;
+      }
+      let g = key && this.furnG.children.find(o => o.userData.fid === key);
+      // 选中的树木 / 车辆在实例层里：临时实体化一件，便于选框与拖动，隐藏对应实例
+      if (!g && key && this.instMap?.has(key)){
+        const f = this.plan.getF?.(key);
+        if (f){
+          g = buildFurniture(f);
+          this.furnG.add(g);
+          this.selTemp = g;
+          const rec = this.instMap.get(key);
+          const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+          for (const e of rec.entries){
+            e.mesh.setMatrixAt(e.index, zero);
+            e.mesh.instanceMatrix.needsUpdate = true;
+          }
+          this.selInst = rec;
+        }
+      }
       if (g){ this.selHelper = new THREE.BoxHelper(g, 0xb5653a); this.scene.add(this.selHelper); }
       this.selDirty = true;
     }
@@ -288,6 +324,10 @@ export const walkMethods = {
     if (this.uiStore.opt.mode === 'walk' && e.code === 'KeyE'){
       const h = this.pick();
       if (h?.door && h.dist < 2.5) this.toggleDoor(h.door);
+      else if (h?.fid){
+        const f = this.plan.getF(h.fid);
+        if (f && (f.type === 'barrier' || f.type === 'gate')) this.toggleAsset(f.id);
+      }
     }
   },
   _onKeyUp(e){ this.keys[e.code] = false; }

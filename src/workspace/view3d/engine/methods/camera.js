@@ -15,9 +15,25 @@ export const cameraMethods = {
   },
 
   isoFrom(P){
-    const d = THREE.MathUtils.clamp(P.p.y, 5, 30);
+    this.fitCameraRange();
+    // 小户型保持 5m 下限 / 30m 上限的舒适机位；商场、厂房这类大平面按「收进整个户型」的距离取景，
+    // 否则机位会被裁到建筑内部（看上去像站在中庭里）。
+    const d = THREE.MathUtils.clamp(P.p.y - P.t.y, 5, Math.max(30, this.fitDist()));
     const dir = new THREE.Vector3(.3, .82, .49).normalize();
     return { t: P.t.clone(), p: P.t.clone().addScaledVector(dir, d) };
+  },
+
+  /** 相机取景范围跟随户型大小：大平面需要更远的轨道距离与更远的远裁面 */
+  fitCameraRange(){
+    if (!this.orbit || !this.camera) return;
+    const need = this.fitDist();
+    const maxD = Math.max(45, need*1.5);
+    if (Math.abs(this.orbit.maxDistance - maxD) > 1) this.orbit.maxDistance = maxD;
+    const far = Math.max(300, maxD*2.2);
+    if (Math.abs(this.camera.far - far) > 1){
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
   },
 
   /** 当前户型在世界坐标里的包围盒（含墙体厚度、飘窗与阳台），按户型几何实时推导 */
@@ -64,6 +80,7 @@ export const cameraMethods = {
   /** 鸟瞰整体：始终以当前户型的中心为目标点，按户型大小自动取景。
    *  有地下层时目标点抬到整体高度中位、机位距离同时覆盖竖向跨度，否则地下室在画面外。 */
   isoWhole(){
+    this.fitCameraRange();
     const b = this.wholeBox();
     const sp = this.elevSpan();
     const y = sp.underground ? (sp.lo + sp.hi)/2 : FOCUS_Y + this.activeElev;
@@ -74,6 +91,7 @@ export const cameraMethods = {
 
   /** 正俯视整体（同上，机位在户型正上方） */
   topWhole(){
+    this.fitCameraRange();
     const b = this.wholeBox();
     const sp = this.elevSpan();
     const y = sp.underground ? (sp.lo + sp.hi)/2 : this.activeElev;

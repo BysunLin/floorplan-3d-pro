@@ -1,6 +1,6 @@
 <template>
   <svg
-    id="plan" ref="svgEl" :class="['tool-' + ui.tool, {'tool-region': !!ui.regionDraw}]" :viewBox="viewBox"
+    id="plan" ref="svgEl" :class="['tool-' + ui.tool, {'tool-region': !!ui.regionDraw, 'lod-site': dt.outerOnly}]" :viewBox="viewBox"
     font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif"
     @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp"
     @wheel.prevent="onWheel" @dblclick="onDblClick" @contextmenu="onContextMenu"
@@ -14,8 +14,14 @@
         :fill="ui.layers.grid ? 'url(#grid)' : 'transparent'" data-bg="1"/>
     </g>
 
+    <!-- 总图档：楼栋外墙轮廓 + 名称 + 层数（室内细节全部不渲染） -->
+    <g id="gSite" v-if="dt.outerOnly" pointer-events="none" v-html="siteSvg"></g>
+
+    <!-- 当前楼栋：室内几何是「楼栋局部坐标」，由 activeTransform 映射到场地 -->
+    <g id="gActiveB" :transform="plan.activeTransform">
+
     <!-- 房间地面 + 门槛 -->
-    <g id="gRooms">
+    <g id="gRooms" v-if="dt.rooms">
       <!-- 房间地面：被区域覆盖后可能被切成多块，逐块绘制；户外区域用虚线描边 -->
       <template v-for="r in ROOMS" :key="r.id">
         <path v-for="(pc, pi) in shapePieces(r)" :key="r.id + ':' + pi" class="room" :data-room="r.id"
@@ -33,16 +39,17 @@
     </g>
 
     <!-- 下层房间轮廓（虚影，便于上下层对位） -->
-    <g id="gLower" pointer-events="none" v-html="lowerSvg"/>
+    <g id="gLower" v-if="dt.editable" pointer-events="none" v-html="lowerSvg"/>
 
-    <!-- 家具 -->
-    <g id="gFurn" :display="ui.layers.furn ? 'inline' : 'none'">
-      <g v-for="f in state.furniture" :key="f.id" class="furn" :data-fid="f.id"
+    <!-- 家具：总图档只保留沙盘资产（楼栋 / 广场 / 成片景观），室内家具不渲染 -->
+    <g id="gFurn" v-if="furnList.length" :display="ui.layers.furn ? 'inline' : 'none'"
+      :pointer-events="dt.furniture ? 'auto' : 'none'">
+      <g v-for="f in furnList" :key="f.id" class="furn" :data-fid="f.id"
         :transform="`translate(${f.cx} ${f.cy}) rotate(${f.rot})`">
         <!-- 整块占地的透明命中区：任何落在家具投影内的点击都优先选中家具，
              而不是穿过图标空隙选中下面的房间 / 区域（图标本身可能只有描边） -->
         <rect :x="-f.w/2" :y="-f.d/2" :width="f.w" :height="f.d"
-          fill="none" pointer-events="all"/>
+          fill="none" :pointer-events="dt.furniture ? 'all' : 'none'"/>
         <g v-html="iconOf(f)"></g>
         <text v-if="showLabel(f)" :transform="`rotate(${-f.rot})`"
           :font-size="labelSize(f)" text-anchor="middle" dominant-baseline="central"
@@ -50,29 +57,34 @@
       </g>
     </g>
 
-    <!-- 墙体 -->
-    <g id="gWalls">
-      <rect v-for="w in walls" :key="w.id" class="wall" :data-wall="w.id"
-        :x="w.x" :y="w.y" :width="w.w" :height="w.h" :fill="w.fill" v-bind="w.extra"/>
+    <!-- 墙体：整段墙一次成形（洞口是轮廓上的真实缺口），墙段矩形退化为命中区 -->
+    <g id="gWalls" v-if="dt.walls">
+      <g v-html="wallRunsSvg" pointer-events="none"></g>
+      <template v-for="w in walls" :key="w.id">
+        <polygon v-if="w.pts" class="wall" :data-wall="w.id"
+          :points="w.pts" :fill="w.fill" v-bind="w.extra"/>
+        <rect v-else class="wall" :data-wall="w.id"
+          :x="w.x" :y="w.y" :width="w.w" :height="w.h" :fill="w.fill" v-bind="w.extra"/>
+      </template>
     </g>
 
     <!-- 画墙预览（A → B，90° 正交） -->
-    <g id="gWallDraw" pointer-events="none" v-html="wallDrawSvg"></g>
+    <g id="gWallDraw" v-if="dt.editable" pointer-events="none" v-html="wallDrawSvg"></g>
 
     <!-- 画墙起点提示：悬浮在已有墙体上的小绿点 -->
-    <g id="gWallHover" pointer-events="none" v-html="wallHoverSvg"></g>
+    <g id="gWallHover" v-if="dt.editable" pointer-events="none" v-html="wallHoverSvg"></g>
 
     <!-- 门窗放置预览：鼠标停在可开洞的墙（非承重墙 / 外墙）上时的绿色可放置区 -->
-    <g id="gOpenHover" pointer-events="none" v-html="openHoverSvg"></g>
+    <g id="gOpenHover" v-if="dt.editable" pointer-events="none" v-html="openHoverSvg"></g>
 
     <!-- 门窗洞口 -->
-    <g id="gOpen" v-html="openingsSvg"></g>
+    <g id="gOpen" v-if="dt.openings" v-html="openingsSvg"></g>
 
     <!-- 区域绘制预览（A → B 矩形 + 扣掉墙体门窗后的区域 + 吸附指示） -->
-    <g id="gRegion" pointer-events="none" v-html="regionSvg"></g>
+    <g id="gRegion" v-if="dt.editable" pointer-events="none" v-html="regionSvg"></g>
 
     <!-- 房间名（缩得很小时按比例放大字号，保证大平面也看得清） -->
-    <g id="gLabels" pointer-events="none" :display="ui.layers.labels ? 'inline' : 'none'">
+    <g id="gLabels" v-if="dt.roomLabels" pointer-events="none" :display="ui.layers.labels ? 'inline' : 'none'">
       <template v-for="r in labelled" :key="r.id">
         <text :x="labelAt(r)[0]" :y="labelAt(r)[1]" :font-size="250*labK" font-weight="600"
           text-anchor="middle" fill="#2b2824" v-bind="HALO">{{ nm(state.rooms[r.id]?.name || r.name) }}</text>
@@ -82,18 +94,22 @@
     </g>
 
     <!-- 尺寸标注（默认户型静态链 / 其他户型按几何推导） -->
-    <g id="gDims" pointer-events="none" :display="ui.layers.dims ? 'inline' : 'none'" v-html="dimsSvg"></g>
+    <g id="gDims" v-if="dt.dims" pointer-events="none" :display="ui.layers.dims ? 'inline' : 'none'" v-html="dimsSvg"></g>
 
     <!-- 测量线 -->
-    <g id="gMeasure" pointer-events="none" v-html="measureSvg"></g>
+    <g id="gMeasure" v-if="dt.editable" pointer-events="none" v-html="measureSvg"></g>
 
     <!-- 拖拽辅助：同类家具虚线框 / 对齐辅助线 / 压墙警示 -->
-    <g id="gAssist" pointer-events="none">
+    <g id="gAssist" v-if="dt.editable" pointer-events="none">
       <rect v-for="(b, i) in ui.assist" :key="'ab' + i" class="assist-box"
         :x="b.cx - b.hw - 80" :y="b.cy - b.hh - 80"
         :width="(b.hw + 80) * 2" :height="(b.hh + 80) * 2"/>
 
       <line v-for="(g, i) in ui.guides" :key="'ag' + i" class="assist-guide"
+        :x1="g.x1" :y1="g.y1" :x2="g.x2" :y2="g.y2"/>
+
+      <!-- 画墙时：附近墙体边线 / 中线延伸出来的对齐辅助线 -->
+      <line v-for="(g, i) in ui.align" :key="'al' + i" class="align-guide"
         :x1="g.x1" :y1="g.y1" :x2="g.x2" :y2="g.y2"/>
 
       <template v-if="ui.dragBad && ui.dragRect">
@@ -109,7 +125,9 @@
     </g>
 
     <!-- 选中框 / 手柄 -->
-    <g id="gSel" v-html="selSvg"></g>
+    <g id="gSel" v-if="dt.editable" v-html="selSvg"></g>
+
+    </g><!-- /gActiveB -->
   </svg>
 </template>
 
@@ -119,7 +137,13 @@ import { storeToRefs } from 'pinia';
 import { usePlanStore, useUiStore, useViewStore, isOpenableType, ELEM_KINDS } from '@/stores/index.js';
 import { setPlanSvg } from '@/shared/dom/planSvg.js';
 import { usePlanInteraction } from '@/workspace/plan2d/interaction/usePlanInteraction.js';
-import { ROOMS, WALLS, WINS, DOORS, SLIDES, NOLABEL, COARSE, aabb, wallRect } from '@/core/model/plan.js';
+import { ROOMS, WALLS, WINS, DOORS, SLIDES, NOLABEL, COARSE, aabb, wallRect, esc } from '@/core/model/plan.js';
+import { isSandboxType } from '@/core/library/index.js';
+import { isSlantedWall, isSlantAB, wallQuad } from '@/core/model/wallLine.js';
+import { lodOf, detailOf } from '@/core/model/lod.js';
+import { quadOf, quadPoints, quadPathD } from '@/core/geometry/seg.js';
+import { wallRuns, runRect, runQuad, runPathD } from '@/core/nodes/derive.js';
+import { roadPath, ROAD_W } from '@/core/model/site.js';
 import { shapePath, roomArea, shapePieces } from '@/core/geometry/region.js';
 import { planHasDims } from '@/core/plans/index.js';
 import { furnSVG } from '@/core/library/furnSvg.js';
@@ -141,6 +165,18 @@ const { activeWall, planId } = storeToRefs(plan);
 
 const svgEl = ref(null);
 const { onDown, onMove, onUp, onWheel, onDblClick, onContextMenu } = usePlanInteraction();
+
+/* ---------------- 比例尺分级（LOD） ----------------
+ * 缩放是在 view.s 上连续变化的，但「画多细」只有 4 档，且必须带滞后：
+ * 判定逻辑集中在 core/model/lod.js，模板里只读 dt.xxx，不再各处写 if。 */
+const lod = computed(() => lodOf(view.s));
+const dt = computed(() => detailOf(lod.value));
+
+/* 家具渲染列表：总图档只保留沙盘资产（楼栋 / 广场 / 成片景观），
+ * 避免缩到全盘时上百件室内家具全部参与 SVG 绘制。 */
+const furnList = computed(() => dt.value.furniture
+  ? state.furniture
+  : state.furniture.filter(f => isSandboxType(f.type)));
 
 onMounted(() => {
   setPlanSvg(svgEl.value);
@@ -238,43 +274,144 @@ const wallsCovered = (x0, y0, x1, y1) => WALLS.some((w, i) => {
   return wx0 <= x0 + 1 && wy0 <= y0 + 1 && wx1 >= x1 - 1 && wy1 >= y1 - 1;
 });
 
+/* 墙体取色：整段墙（run）与拆除虚线共用一套，避免两处规则漂移 */
+function wallStyle(k, i){
+  const wm = wallMat(plan.wallMatId(i));
+  if (k === 'low')
+    return { fill: '#e9e3d8', extra: { stroke: '#8f897d', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' } };
+  if (k === 'b') return { fill: ui.layers.bearing ? '#b8412c' : '#26241f', extra: {} };
+  if (k === 'e') return { fill: '#8f897d', extra: {} };
+  // 玻璃材质（含旧存档里的 'g' 玻璃墙面）：半透明淡蓝 + 细描边，与实体墙区分
+  if (k === 'g' || wm.glass)
+    return { fill: '#dceef5', extra: { stroke: '#4f7394', 'stroke-width': 1.2, 'vector-effect': 'non-scaling-stroke', 'fill-opacity': .85 } };
+  return { fill: wm.fill, extra: {} };
+}
+
+/* 墙段轮廓 runPathD 已抽到 core/nodes/derive.js：总图档的「其它楼栋外墙」也用同一套。 */
+
+/* 整段墙：与 3D 共用同一套节点推导（合并墙段 + 转角去重 + 真实洞口）。
+ * 2D 不再逐段画矩形，墙段矩形退化为命中区。 */
+const wallRunsSvg = computed(() => {
+  const g = plan.getGraph?.({ withContent: false });
+  if (!g) return '';
+  const out = [];
+  for (const r of wallRuns(g)){
+    const i = r.wallIds[0];
+    const k = WALLS[i]?.[4] || 'n';
+    const { fill, extra } = wallStyle(k, i);
+    let stroke = extra.stroke || 'none';
+    let sw = extra['stroke-width'] || 0;
+    let dash = extra['stroke-dasharray'] || '';
+    // 正在放门窗：可开洞的墙描绿虚线提示（原来按墙段描，现在整段）
+    if (hintOpenable.value && isOpenableType(k)){ stroke = '#2f8f6a'; sw = 2.5; dash = '7 4'; }
+    const attr = [
+      `fill="${fill}"`, 'fill-rule="evenodd"',
+      stroke === 'none' ? 'stroke="none"'
+        : `stroke="${stroke}" stroke-width="${sw}" vector-effect="non-scaling-stroke"`,
+      dash ? `stroke-dasharray="${dash}"` : '',
+      extra['fill-opacity'] ? `fill-opacity="${extra['fill-opacity']}"` : ''
+    ].filter(Boolean).join(' ');
+    out.push(`<path d="${runPathD(r)}" ${attr}/>`);
+  }
+  return out.join('');
+});
+
+/* ---------------- 总图档（site） ----------------
+ * 缩到 1:N > 2500 时的全部内容：道路 + 每栋楼的外墙轮廓 + 名称 + 层数。
+ *    · 当前栋：外墙取自活的几何（局部坐标），套 activeTransform 映射到场地；
+ *    · 其它栋：外墙路径由模板缓存（store 里按 planId 缓存），套各自 transform；
+ *    · 文字放在世界坐标里（不进 transform），保证任何楼栋角度下都正着看；
+ *    · 字号按 1/view.s 反向缩放 → 屏幕上恒定。 */
+const activeOuterSvg = computed(() => {
+  const g = plan.getGraph?.({ withContent: false });
+  if (!g) return '';
+  const runs = wallRuns(g);
+  const kindOf = r => WALLS[r.wallIds[0]]?.[4] || 'n';
+  let list = runs.filter(r => kindOf(r) === 'e');
+  if (!list.length) list = runs.filter(r => kindOf(r) === 'b');
+  return list.map(r =>
+    `<path d="${runPathD(r)}" fill="${kindOf(r) === 'b' ? '#4a453d' : '#8f897d'}" fill-rule="evenodd"/>`
+  ).join('');
+});
+
+const siteSvg = computed(() => {
+  if (!dt.value.outerOnly) return '';
+  const k = 1 / view.s;
+  const halo = 'stroke="#fffdf9" stroke-width="4" paint-order="stroke"';
+  const out = [];
+
+  /* ① 道路：粗底 + 中间虚线（先画，压在楼栋下面） */
+  for (const r of plan.siteRoads){
+    const d = roadPath(r.pts);
+    if (!d) continue;
+    const sel = ui.siteSel?.kind === 'road' && ui.siteSel.id === r.id;
+    out.push(`<path d="${d}" fill="none" stroke="${sel ? '#b5653a' : '#d5cec1'}"
+      stroke-width="${r.w || ROAD_W}" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>`);
+    out.push(`<path d="${d}" fill="none" stroke="#fffdf9" stroke-width="${Math.max(60, (r.w || ROAD_W) * .05)}"
+      stroke-dasharray="${300 * k} ${260 * k}" stroke-linecap="round" opacity=".9"/>`);
+  }
+  /* 绘制中的道路预览 */
+  const nr = ui.siteRoad;
+  if (nr?.pts?.length){
+    const pts = [...nr.pts, ...(nr.cur ? [nr.cur] : [])];
+    out.push(`<path d="${roadPath(pts)}" fill="none" stroke="#2f8f6a" stroke-width="${ROAD_W}"
+      stroke-linecap="round" stroke-linejoin="round" opacity=".22"/>`);
+    out.push(`<path d="${roadPath(pts)}" fill="none" stroke="#2f8f6a" stroke-width="1.6"
+      vector-effect="non-scaling-stroke" stroke-dasharray="6 4"/>`);
+  }
+
+  /* ② 楼栋 */
+  for (const b of plan.siteBuildings){
+    const sel = ui.siteSel?.kind === 'building' && ui.siteSel.id === b.id;
+    const [x0, y0, x1, y1] = b.bounds;
+    const lb = b.localBounds;
+    out.push(`<g transform="${b.transform}">`
+      + (lb ? `<rect x="${lb.x}" y="${lb.y}" width="${lb.w}" height="${lb.h}" fill="${b.isActive ? '#e7e0d3' : '#efe9dd'}"
+          stroke="${sel ? '#b5653a' : '#b8ae9d'}" stroke-width="${sel ? 2 : 1}" vector-effect="non-scaling-stroke" rx="${2 * k}"/>` : '')
+      + (b.isActive ? activeOuterSvg.value : b.wallsD)
+      + `</g>`);
+    const cx = (x0 + x1) / 2, ly = y1 + 14 * k;
+    const floors = (b.floors || 1) > 1 ? tr(`${b.floors} 层`, `${b.floors} floors`) : tr('单层', 'Single floor');
+    out.push(`<text x="${cx}" y="${ly}" font-size="${13 * k}" text-anchor="middle" font-weight="600"
+      fill="${sel ? '#b5653a' : '#2b2824'}" ${halo}>${esc(b.name || '')}</text>`);
+    out.push(`<text x="${cx}" y="${ly + 16 * k}" font-size="${9.5 * k}" text-anchor="middle"
+      fill="#8a8174" ${halo}>${floors}</text>`);
+  }
+  return out.join('');
+});
+
+/* 墙段矩形：只承担命中（拆改模式的 hover / 点击）与已拆除墙的虚线提示。
+ * 未拆除的墙填 transparent —— 可见部分由上面的整段墙负责。 */
 const walls = computed(() => {
   const list = WALLS.map((w, i) => {
-  const [x0, y0, x1, y1, k] = w, id = 'w' + i;
-  const dem = state.demolished.includes(id);
-  // 已拆除、但被其它墙完全覆盖的墙段（如「延长合并」后残留的旧墙）无需再画
-  if (dem && wallsCovered(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))) return null;
-  let fill, extra = {};
-  // 非承重墙按「材质」着色（材质在属性面板里改；默认乳胶漆与原来一致）
-  const wm = wallMat(plan.wallMatId(i));
-  if (k === 'low'){ fill = '#e9e3d8'; extra = { stroke: '#8f897d', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }; }
-  else if (k === 'b') fill = ui.layers.bearing ? '#b8412c' : '#26241f';
-  else if (k === 'e') fill = '#8f897d';
-  // 玻璃材质（含旧存档里的 'g' 玻璃墙面）：半透明淡蓝 + 细描边，与实体墙区分
-  else if (k === 'g' || wm.glass){
-    fill = '#dceef5'; extra = { stroke: '#4f7394', 'stroke-width': 1.2, 'vector-effect': 'non-scaling-stroke', 'fill-opacity': .85 };
-  }
-  else fill = wm.fill;
-  if (dem){
-    fill = 'rgba(198,91,58,.12)';
-    extra = { stroke: '#c65b3a', 'stroke-width': 1.2, 'stroke-dasharray': '5 3', 'vector-effect': 'non-scaling-stroke' };
-  } else if (hintOpenable.value && isOpenableType(k)){
-    extra = { stroke: '#2f8f6a', 'stroke-width': 2.5, 'stroke-dasharray': '7 4', 'vector-effect': 'non-scaling-stroke' };
-  }
-  return { id, x: x0, y: y0, w: x1 - x0, h: y1 - y0, fill, extra };
+    const [x0, y0, x1, y1] = w, id = 'w' + i;
+    const dem = state.demolished.includes(id);
+    // 已拆除、但被其它墙完全覆盖的墙段（如「延长合并」后残留的旧墙）无需再画
+    if (dem && wallsCovered(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))) return null;
+
+    // 斜墙：命中区必须是四边形。用 AABB 当命中区会凭空多出一大片「可点击的空气」
+    if (isSlantedWall(w)){
+      return {
+        id, pts: quadPoints(wallQuad(w)),
+        fill: dem ? 'rgba(198,91,58,.12)' : 'transparent',
+        extra: dem
+          ? { stroke: '#c65b3a', 'stroke-width': 1.2, 'stroke-dasharray': '5 3', 'vector-effect': 'non-scaling-stroke' }
+          : {}
+      };
+    }
+
+    if (!dem) return { id, x: x0, y: y0, w: x1 - x0, h: y1 - y0, fill: 'transparent', extra: {} };
+    return {
+      id, x: x0, y: y0, w: x1 - x0, h: y1 - y0,
+      fill: 'rgba(198,91,58,.12)',
+      extra: { stroke: '#c65b3a', 'stroke-width': 1.2, 'stroke-dasharray': '5 3', 'vector-effect': 'non-scaling-stroke' }
+    };
   }).filter(Boolean);
-  // 非一层：入户门位置补一段非承重墙（入户门只属于一层）
-  if (isUpper.value){
-    DOORS.forEach((d, i) => {
-      if (!d.entry || state.demolished.includes('nd' + i)) return;
-      list.push({ id: 'gate' + i, x: d.rect[0], y: d.rect[1],
-        w: d.rect[2] - d.rect[0], h: d.rect[3] - d.rect[1], fill: '#a7a195', extra: {} });
-    });
-  }
+  // 非一层：整段墙已把入户门位置填实（opening.suppressed），这里不再补矩形
   return list;
 });
 
-/* 画墙预览：A 点已确定时，实时显示 90° 墙体 + 长度 */
+/* 画墙预览：A 点已确定时，实时显示墙体外框 + 长度（斜墙另显角度与中心线） */
 const wallDrawSvg = computed(() => {
   const it = activeWall.value;
   if (!it || it.kind !== 'wall' || !ui.wallA || !ui.wallB) return '';
@@ -282,16 +419,33 @@ const wallDrawSvg = computed(() => {
   // 沿旧墙同轴绘制且墙型一致 → 沿用旧墙类型 / 厚度（延长合并）；
   // 墙型不同 → 按所选类型绘制（覆盖转换），预览与实际落墙保持一致
   const sn = ui.wallSnap;
-  const along = sn && (sn.horiz ? ui.wallAxis === 'h' : ui.wallAxis === 'v');
+  const along = sn && !sn.slanted && (sn.horiz ? ui.wallAxis === 'h' : ui.wallAxis === 'v');
   const same = along && sn.type === it.sub;
   const type = same ? sn.type : it.sub;
-  const [x0, y0, x1, y1] = wallRect(ui.wallA, ui.wallB, same ? sn.t : projectWallT(type), type);
-  const len = Math.max(x1 - x0, y1 - y0);
+  const t = same ? sn.t : projectWallT(type);
+  const a = ui.wallA, b = ui.wallB;
   const col = type === 'b' ? '#b8412c' : type === 'g' ? '#4f7394' : '#2f8f6a';
   const S = `stroke="${col}" stroke-width="1.6" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"`;
+  const dot = `<circle cx="${a.x}" cy="${a.y}" r="${4*k}" fill="${col}"/>`;
+  const len = Math.round(Math.hypot(b.x - a.x, b.y - a.y));
+
+  // 斜墙：四边形预览 + 中心线（虚线细线，让「墙轴」看得见）+ 长度 / 角度
+  if (isSlantAB(a, b)){
+    const q = quadOf(a, b, t);
+    const deg = ((Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI) + 360) % 360;
+    const ang = Math.round(deg * 10) / 10;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    return `<polygon points="${quadPoints(q)}" fill="${col}" opacity=".3" ${S}/>`
+      + `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${col}" stroke-width="1" stroke-dasharray="2 6" opacity=".8" vector-effect="non-scaling-stroke"/>`
+      + dot
+      + `<text x="${mx}" y="${my - 10*k}" font-size="${13*k}" text-anchor="middle" font-weight="600" fill="${col}" stroke="#fff" stroke-width="${3.5*k}" paint-order="stroke">${len} mm · ${ang}°</text>`;
+  }
+
+  // 正交墙：与原来完全一致的矩形预览
+  const [x0, y0, x1, y1] = wallRect(a, b, t, type);
   return `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" fill="${col}" opacity=".3" ${S}/>`
-    + `<circle cx="${ui.wallA.x}" cy="${ui.wallA.y}" r="${4*k}" fill="${col}"/>`
-    + `<text x="${(x0 + x1)/2}" y="${(y0 + y1)/2 - 10*k}" font-size="${13*k}" text-anchor="middle" font-weight="600" fill="${col}" stroke="#fff" stroke-width="${3.5*k}" paint-order="stroke">${len} mm</text>`;
+    + dot
+    + `<text x="${(x0 + x1)/2}" y="${(y0 + y1)/2 - 10*k}" font-size="${13*k}" text-anchor="middle" font-weight="600" fill="${col}" stroke="#fff" stroke-width="${3.5*k}" paint-order="stroke">${Math.max(x1 - x0, y1 - y0)} mm</text>`;
 });
 
 /* 画墙起点提示：选中墙体组件、尚未落点时，鼠标悬浮在已有墙体上的小绿点 */

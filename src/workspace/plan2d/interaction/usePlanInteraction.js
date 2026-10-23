@@ -6,7 +6,11 @@ import { storeToRefs } from 'pinia';
 import { usePlanStore, useUiStore, useViewStore } from '@/stores/index.js';
 import { getPlanSvg } from '@/shared/dom/planSvg.js';
 import { getEngine } from '@/workspace/view3d/registry.js';
-import { TAP, ROOMS, esc, axisPoint, clampScale } from '@/core/model/plan.js';
+import { TAP, ROOMS, WALLS, esc, axisPoint, clampScale } from '@/core/model/plan.js';
+import { snapAngle, wallAngles } from '@/core/geometry/angle.js';
+import { snapWallDeg, resetWallSnap, projectOnRay, isAxisDeg, degAxis, wallRefs } from '@/core/geometry/wallSnap.js';
+import { lodOf, LOD } from '@/core/model/lod.js';
+import { toLocal, ROAD_W } from '@/core/model/site.js';
 import { areaOf } from '@/core/geometry/region.js';
 import { tr } from '@/i18n.js';
 
@@ -14,7 +18,20 @@ let pinch = null;
 const touches = new Map();
 
 const svg = () => getPlanSvg();
-const toP = e => useViewStore().toMM(e, svg());
+/** 屏幕 → 场地（世界）坐标 */
+const toW = e => useViewStore().toMM(e, svg());
+
+/**
+ * 世界 → 当前楼栋的局部坐标。
+ * 室内几何都存在「楼栋局部坐标」里（总图里把楼栋挪开时，几何不动、只改变换），
+ * 所以室内的吸附 / 命中 / 绘制都必须先减掉楼栋位移，否则会整体偏一个楼栋偏移量。
+ */
+function toEdit(wp){
+  const b = usePlanStore().activeBuilding;
+  return (b && (b.x || b.y)) ? toLocal(b, wp.x, wp.y) : wp;
+}
+/** 屏幕 → 当前楼栋局部坐标（室内编辑的默认坐标系） */
+const toP = e => toEdit(toW(e));
 
 /** 屏幕坐标 → 户型坐标（2D 取平面图，3D 取射线与地面的交点） */
 export function dropPoint(x, y){
@@ -26,8 +43,19 @@ export function dropPoint(x, y){
   // 落在悬浮卡片或浮层控件上时不接收拖放
   if (document.elementFromPoint(x, y)?.closest('.glass-card,#ctxMenu,#levelBar,#walkOverlay,#joy,#walkExit')) return null;
   if (uiStore.is3D) return getEngine()?.groundAt(x, y) || null;
-  const p = viewStore.toMM({ clientX: x, clientY: y }, svg());
+  // 家具 / 元素都活在「楼栋局部坐标」里：与 toP 一致，先减掉楼栋位移
+  const p = toEdit(viewStore.toMM({ clientX: x, clientY: y }, svg()));
   return { x: p.x, y: p.y, s: viewStore.view.s };
+}
+
+/** 结束道路绘制并落库（双击 / Esc / 工具条「完成」都走这里） */
+export function finishSiteRoad(){
+  const ui = useUiStore().ui;
+  const plan = usePlanStore();
+  const cur = ui.siteRoad;
+  if (!cur) return;
+  if (cur.pts.length >= 2) plan.addRoad(cur.pts, ROAD_W);
+  ui.siteRoad = null;
 }
 
 function pinchInfo(){
@@ -48,7 +76,7 @@ export function usePlanInteraction(){
     state, getF, mutate, commit, snap, snapMove, snapPoint,
     addWall, addOpening, hitWall, projectWallT,
     wallUnderPoint, resolveWallStart, snapAlongHost, snapWallEndpoint, snapWallLength,
-    snapWallPoint, pointInHouse, openingPreviewAt,
+    snapWallPoint, pointInHouse, openingPreviewAt, alignWallDraw,
     addRegion, snapRegionPoint
   } = plan;
   const { ui, closeDrawers, select, setWallItem, cancelWallDraw, cancelRegionDraw } = uiStore;
@@ -58,24 +86,54 @@ export function usePlanInteraction(){
   let drag = null;
 
   /**
-   * 计算画墙终点 B：
-   *  正交取点（不夹在户型内，允许向外墙外延伸 / 户外绘制）
-   *  → 沿旧墙时吸附 25/50/75… 刻度并限制在墙长内；向外延长 / 自由绘制时吸附长度断点
-   *  → 靠近其它墙时吸附墙角 / 墙面。
+   * 计算画墙终点 B —— 吸附流水线，顺序即优先级：
+   *
+   *   ① 沿旧墙延长 / 覆盖（起点吸附在墙上且方向与宿主同轴）→ 完全沿用旧的正交逻辑
+   *   ② 方向吸附：参考方向（全局轴 + 已有墙体走向）→ 15° 步进（**没有自由角度**）
+   *   ③ 吸附结果恰好是 0/90 → 走旧的正交取点，保证端面对齐 / T 接几何与今天一致
+   *   ④ 斜向 → 沿吸附方向投射鼠标，长度断点吸附（沿真实墙轴，不是 x/y 差）
+   *   ⑤ 端点吸附（墙角 / 墙面 / 斜墙中心线投影）最后覆盖：
+   *      吸到真实顶点时角度必须「让位」，这不是自由角度，而是精确连接。
+   *
+   * Shift：与旧版一致 —— 翻转正交方向（水平 ↔ 垂直）。
+   * 容差按屏幕像素换算成角度，并带滞后（见 core/geometry/wallSnap.js）。
    */
   function wallEndpoint(a, p, shift){
     const w = ui.wallSnap;
-    const along = w && (w.horiz ? ui.wallAxis === 'h' : ui.wallAxis === 'v');
-    let bp = axisPoint(a, p, shift, ui.wallAxis, false);
+
+    // ① 沿宿主墙延长 / 覆盖：正交刻度的语义与旧实现完全一致
+    const along = w && !w.slanted && (w.horiz ? ui.wallAxis === 'h' : ui.wallAxis === 'v');
     if (along){
+      let bp = axisPoint(a, p, shift, ui.wallAxis, false);
       bp = snapAlongHost(w, a, bp);
       const a0 = w.horiz ? w.x0 : w.y0, a1 = w.horiz ? w.x1 : w.y1;
       const c = w.horiz ? bp.x : bp.y;
       if (c < a0 - 1 || c > a1 + 1) bp = snapWallLength(a, bp);   // 墙段之外：长度断点吸附
-    } else {
-      bp = snapWallLength(a, bp);                                 // 自由 / 垂直绘制：长度断点吸附
+      return snapWallEndpoint(bp, w?.i);
     }
-    return snapWallEndpoint(bp, w?.i);
+
+    // ② 方向吸附：参考方向 → 15° 步进，永远落在整齐角度上
+    const rawDeg = Math.atan2(p.y - a.y, p.x - a.x) * 180 / Math.PI;
+    const screenLen = Math.hypot(p.x - a.x, p.y - a.y) * view.s;
+    const sn = snapWallDeg(rawDeg, wallRefs(wallAngles(WALLS)), { screenLen, px: 10 });
+
+    // ③ 正交：交给旧逻辑（B 点严格落在轴上，长度 / 端面对齐都是原有行为）
+    if (isAxisDeg(sn.deg)){
+      const axis = shift ? (degAxis(sn.deg) === 'h' ? 'v' : 'h') : degAxis(sn.deg);
+      let bp = axisPoint(a, p, false, axis, false);
+      bp = snapWallLength(a, bp);
+      return snapWallEndpoint(bp, w?.i);
+    }
+
+    // ④ 斜向：沿吸附方向投射鼠标 → 长度断点吸附
+    const rad = sn.deg * Math.PI / 180;
+    const len0 = projectOnRay(a, p, sn.deg);
+    let bp = { x: a.x + Math.cos(rad) * len0, y: a.y + Math.sin(rad) * len0 };
+    bp = snapWallLength(a, bp);
+
+    // ⑤ 端点吸附最后覆盖（吸到墙角时角度会「让位」给精确连接，这是期望行为）
+    bp = snapWallEndpoint(bp, w?.i);
+    return { ...bp, deg: Math.atan2(bp.y - a.y, bp.x - a.x) * 180 / Math.PI };
   }
 
   /** 结束区域绘制：创建区域（完成后默认选中，退出绘制状态；失败则留在绘制模式，方便重画） */
@@ -151,6 +209,54 @@ export function usePlanInteraction(){
     return true;
   }
 
+  /* ======================= 总图（site 档）交互 =======================
+   * 只有三件事：选/拖楼栋、放楼栋、画道路。地面（世界）坐标系，
+   * 与室内编辑完全分开，互不影响。 */
+  let siteDrag = null;
+
+  function siteDown(e, wp){
+    const tool = ui.siteTool;
+
+    // 道路：连续点，双击 / Esc 结束
+    if (tool === 'road'){
+      if (!ui.siteRoad) ui.siteRoad = { pts: [[Math.round(wp.x), Math.round(wp.y)]], cur: null };
+      else ui.siteRoad.pts.push([Math.round(wp.x), Math.round(wp.y)]);
+      return;
+    }
+
+    // 楼栋：点一下放一栋（模板 = 当前方案）
+    if (tool === 'building'){
+      const b = plan.addBuilding({ x: Math.round(wp.x), y: Math.round(wp.y) });
+      ui.siteSel = { kind: 'building', id: b.id };
+      return;
+    }
+
+    // 选择 / 拖动：命中框放宽到屏幕上约 4px
+    const hit = plan.buildingAt(wp, 4 / view.s);
+    ui.siteSel = hit ? { kind: 'building', id: hit.id } : null;
+    if (!hit) return;
+    siteDrag = { id: hit.id, before: snap(), sx: wp.x, sy: wp.y, ox: hit.x, oy: hit.y, moved: false };
+  }
+
+  function siteMove(wp){
+    if (ui.siteRoad){
+      if (ui.siteRoad.pts.length) ui.siteRoad.cur = [Math.round(wp.x), Math.round(wp.y)];
+      return;
+    }
+    if (!siteDrag) return;
+    const dx = wp.x - siteDrag.sx, dy = wp.y - siteDrag.sy;
+    if (!siteDrag.moved && Math.hypot(dx, dy) * view.s < TAP) return;   // 抖动容忍
+    siteDrag.moved = true;
+    plan.setBuildingPos(siteDrag.id, siteDrag.ox + dx, siteDrag.oy + dy);
+  }
+
+  function siteUp(){
+    if (siteDrag){
+      if (siteDrag.moved) commit(siteDrag.before);   // 一次性入撤销栈
+      siteDrag = null;
+    }
+  }
+
   function onDown(e){
     if (e.button === 1 || e.button === 2) return;
     closeDrawers();
@@ -169,6 +275,14 @@ export function usePlanInteraction(){
       }
     }
     if (pinch) return;
+
+    /* 总图档（1:N > 2500）：室内元素根本没渲染，只处理场地（楼栋 / 道路）。
+     * 否则会在「看不见的墙上」画出几何，属于典型的暗坑。 */
+    if (lodOf(view.s) === LOD.SITE){
+      siteDown(e, toW(e));
+      s.setPointerCapture(e.pointerId);
+      return;
+    }
 
     const p = toP(e), t = e.target;
 
@@ -210,8 +324,9 @@ export function usePlanInteraction(){
     if (ui.tool === 'demolish' && activeWall.value){
       const it = activeWall.value;
       if (it.kind === 'wall'){
-        // 第一下取 A 点，第二下取 B 点（axisPoint 保证 90° 且不超出外墙）
+        // 第一下取 A 点，第二下取 B 点（方向可正交也可斜向，见 wallEndpoint）
         if (!ui.wallA){
+          resetWallSnap();
           // 起点动态判定：房子内部必须落在墙上；户外区域不受限制
           const wall = wallUnderPoint(p);
           if (wall){
@@ -230,6 +345,12 @@ export function usePlanInteraction(){
           }
           ui.wallB = ui.wallA;
         } else {
+          // 双击的第二下（含落点与起点重合）→ 结束折线，不再落一段零长墙
+          if (e.detail >= 2 || Math.hypot(p.x - ui.wallA.x, p.y - ui.wallA.y) * view.s < 6){
+            cancelWallDraw();
+            return;
+          }
+
           const wall = ui.wallSnap;
           // 取 B 点时：按 B 的方向重新吸附起点（墙面 / 墙端边缘 / 延长）
           if (wall){
@@ -239,11 +360,21 @@ export function usePlanInteraction(){
           // 沿旧墙同轴绘制（从墙端向内覆盖 / 向外延长）：
           //  · 所选类型与旧墙一致 → 沿用旧墙厚度，便于合并成同一段墙（延长）；
           //  · 所选类型不同       → 按所选类型绘制，由 addWall 把覆盖区域转为该类型并拆分其余部分。
-          const along = wall && (wall.horiz ? ui.wallAxis === 'h' : ui.wallAxis === 'v');
+          const along = wall && !wall.slanted && (wall.horiz ? ui.wallAxis === 'h' : ui.wallAxis === 'v');
           const sameType = along && wall.type === it.sub;
           const bp = wallEndpoint(ui.wallA, p, e.shiftKey);
-          addWall(ui.wallA, bp, it.sub, sameType ? wall.t : 0);
-          cancelWallDraw();
+          // 落墙前做同样的墙线对齐，保证落点与预览完全一致（斜墙内部自行跳过）
+          const al = alignWallDraw(ui.wallA, bp, wall?.i ?? -1);
+          addWall(al.a, al.b, it.sub, sameType ? wall.t : 0);
+
+          // 折线连续绘制：落完一段后以 B 为新起点，可以一笔画完整户型；
+          // Esc / 右键 / 双击结束（见 cancelWallDraw / onDblClick）。
+          resetWallSnap();
+          ui.wallA = { x: al.b.x, y: al.b.y };
+          ui.wallB = { ...ui.wallA };
+          ui.wallSnap = null;          // 新一段不再受上一段宿主墙的正交约束
+          ui.wallAxis = null;
+          ui.align = [];
         }
         return;
       }
@@ -297,6 +428,12 @@ export function usePlanInteraction(){
       view.y0 = pinch.py - c[1]/ns;
       return;
     }
+    /* 总图档 / 正在画道路：只更新场地状态 */
+    if (lodOf(view.s) === LOD.SITE || ui.siteRoad){
+      siteMove(toW(e));
+      return;
+    }
+
     const p = toP(e);
     cursor.x = Math.round(p.x);
     cursor.y = Math.round(p.y);
@@ -323,7 +460,11 @@ export function usePlanInteraction(){
           const r = resolveWallStart(ui.wallSnap, ui.wallA, p, projectWallT(activeWall.value.sub));
           ui.wallA = r.a; ui.wallAxis = r.axis;
         }
-        ui.wallB = wallEndpoint(ui.wallA, p, e.shiftKey);
+        // 墙线对齐：附近墙体的边线 / 中线会把新墙「拉正」，并给出一条延伸虚线
+        const al = alignWallDraw(ui.wallA, wallEndpoint(ui.wallA, p, e.shiftKey), ui.wallSnap?.i ?? -1);
+        ui.wallA = al.a;
+        ui.wallB = al.b;
+        ui.align = al.guides;
       }
       // 画墙起点提示：已有墙体上显示吸附点；户外区域显示自由起点
       if (ui.tool === 'demolish' && activeWall.value?.kind === 'wall' && !ui.wallA){
@@ -374,7 +515,8 @@ export function usePlanInteraction(){
       [f.cx, f.cy] = snapMove(f, p.x - drag.ox, p.y - drag.oy);
     } else if (drag.kind === 'rot'){
       const a = Math.atan2(p.y - f.cy, p.x - f.cx)*180/Math.PI + 90;
-      f.rot = e.shiftKey ? ((a % 360) + 360) % 360 : Math.round(a/15)*15 % 360;
+      // 与 3D 旋转 gizmo 共用同一套吸附规则：墙体走向优先，其次 15°；Shift 自由转
+      f.rot = snapAngle(a, wallAngles(WALLS), { step: 15, tol: 6, free: e.shiftKey });
     } else if (drag.kind === 'size'){
       const a = f.rot*Math.PI/180, c = Math.cos(a), s = Math.sin(a);
       const dx = p.x - f.cx, dy = p.y - f.cy;
@@ -393,6 +535,7 @@ export function usePlanInteraction(){
     touches.delete(e.pointerId);
     cancelLongPress();
     if (pinch){ if (touches.size < 2) pinch = null; return; }
+    if (lodOf(view.s) === LOD.SITE){ siteUp(); return; }
     if (lpFired){                     // 长按已弹出菜单：抬手不再触发「轻点选中」/ 平移
       lpFired = false;
       if (!drag || !drag.moved){       // 长按后没有拖动 → 丢弃这次指针操作
@@ -416,6 +559,10 @@ export function usePlanInteraction(){
   }
 
   function onDblClick(e){
+    // 总图档：双击结束道路折线
+    if (lodOf(view.s) === LOD.SITE){ finishSiteRoad(); return; }
+    // 正在画墙：双击 = 结束折线（连续绘制模式下的收笔动作）
+    if (ui.wallA){ cancelWallDraw(); return; }
     if (ui.tool === 'select' && e.target.closest?.('[data-fid]')){
       const f = getF(e.target.closest('[data-fid]').dataset.fid);
       if (f) mutate(() => { f.rot = (f.rot + 90) % 360; });
